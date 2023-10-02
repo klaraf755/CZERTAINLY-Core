@@ -533,6 +533,7 @@ public class CertificateServiceImpl implements CertificateService {
                 // and return incomplete chain
                 lastCertificate.setIssuerCertificateUuid(null);
                 lastCertificate.setIssuerSerialNumber(null);
+                certificateRepository.save(lastCertificate);
                 return chainCertificates;
             }
         }
