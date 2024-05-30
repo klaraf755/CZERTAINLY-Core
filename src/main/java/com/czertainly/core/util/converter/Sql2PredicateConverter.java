@@ -1,6 +1,7 @@
 package com.czertainly.core.util.converter;
 
 import com.czertainly.api.model.client.certificate.SearchFilterRequestDto;
+import com.czertainly.api.model.common.attribute.v2.content.AttributeContent;
 import com.czertainly.api.model.common.attribute.v2.content.AttributeContentType;
 import com.czertainly.api.model.common.enums.IPlatformEnum;
 import com.czertainly.api.model.core.auth.Resource;
@@ -314,9 +315,21 @@ public class Sql2PredicateConverter {
                 // --- SUB QUERY ---
                 final Subquery<UUID> subquery = criteriaQuery.subquery(UUID.class);
                 final Root<AttributeContent2Object> subRoot = subquery.from(AttributeContent2Object.class);
-                final Join<AttributeContent2Object, AttributeContentItem> joinAttributeContentItem = subRoot.join("attributeContentItem");
+                final Join<AttributeContent2Object, AttributeContentItem> joinAttributeContentItem = subRoot.join("attributeContentItem", JoinType.INNER);
+                final Join<AttributeContentItem, AttributeDefinition> ad = joinAttributeContentItem.join("attributeDefinition", JoinType.INNER);
+
 
                 subquery.select(subRoot.get("objectUuid"));
+
+//                subquery.where(
+//                                criteriaBuilder.equal(joinAttributeContentItem.get("objectType"), "CERTIFICATE"),
+//                                criteriaBuilder.equal(ad.get("contentType"), "TEXT"),
+//                                criteriaBuilder.equal(ad.get("name"), "custom test"),
+//                                criteriaBuilder.equal(ad.get("type"), "CUSTOM")
+//                        );
+//                final Join<AttributeContentItem, AttributeDefinition> joinAttributeDefinition = joinAttributeContentItem.join("attributeDefinition");
+
+//                subquery.select(subRoot.get("objectUuid"));
 
                 final List<Predicate> subPredicates = new ArrayList<>();
                 subPredicates.add(criteriaBuilder.equal(subRoot.get("objectType"), resource));
@@ -336,9 +349,16 @@ public class Sql2PredicateConverter {
                     final SearchFieldObject searchField = searchFieldObject.get();
 
                     final Subquery<String> jsonValueQuery = subquery.subquery(String.class);
-                    final Root subACIRoot = jsonValueQuery.from(AttributeContentItem.class);
+                    final Root<AttributeContentItem> subACIRoot = jsonValueQuery.from(AttributeContentItem.class);
 
-                    final Expression expressionFunctionToGetJsonValue = criteriaBuilder.function("jsonb_extract_path_text", String.class, subACIRoot.get("json"),
+                    subPredicates.add(criteriaBuilder.equal(ad.get("contentType"), searchField.getAttributeContentType()));
+                    subPredicates.add(criteriaBuilder.equal(ad.get("type"), searchField.getAttributeType()));
+                    subPredicates.add(criteriaBuilder.equal(ad.get("name"), fieldIdentifierName));
+//                    subPredicates.add(criteriaBuilder.equal(subACIRoot.get("uuid"), joinAttributeContentItem.get("uuid")));
+
+
+
+                    final Expression<String> expressionFunctionToGetJsonValue = criteriaBuilder.function("jsonb_extract_path_text", String.class, joinAttributeContentItem.get("json"),
                             criteriaBuilder.literal(searchField.getAttributeContentType().isFilterByData() ? "data" : "reference"));
 
                     final Predicate predicateForContentType = criteriaBuilder.equal(prepareExpression(subACIRoot, "attributeDefinition.contentType"), searchField.getAttributeContentType());
@@ -347,14 +367,22 @@ public class Sql2PredicateConverter {
                     final Predicate predicateAttributeName = criteriaBuilder.equal(prepareExpression(subACIRoot, "attributeDefinition.name"), fieldIdentifierName);
 
                     jsonValueQuery.select(expressionFunctionToGetJsonValue);
-                    jsonValueQuery.where(predicateForContentType, predicateToKeepRelationWithUpperQuery, predicateAttributeName, predicateGroup);
+//                    jsonValueQuery.where(predicateForContentType, predicateToKeepRelationWithUpperQuery, predicateAttributeName, predicateGroup);
 
                     final Predicate predicateOfTheExpression =
-                            buildPredicateByCondition(criteriaBuilder, dto.getCondition(), jsonValueQuery, null, null, null, searchField.isDateTimeFormat(), searchField.isBooleanFormat(), dto, searchField);
+                            // If the condition operator is EMPTY, first retrieve all non-empty objects UUIDs for which there is an attribute with definition in filter and later return complement
+                            buildPredicateByCondition(criteriaBuilder, dto.getCondition(), expressionFunctionToGetJsonValue, null, null, null, searchField.isDateTimeFormat(), searchField.isBooleanFormat(), dto, searchField);
+
 
                     subPredicates.add(predicateOfTheExpression);
                     subquery.where(subPredicates.toArray(new Predicate[]{}));
+//                    // For operator EMPTY, return complement of NOT_EMPTY result
+//                    if (dto.getCondition() == FilterConditionOperator.EMPTY) {
+//                        rootPredicates.add(criteriaBuilder.not(criteriaBuilder.in(root.get("objectUuid")).value(subquery)));
+//                    }
+//                    else {
                     rootPredicates.add(criteriaBuilder.in(root.get("objectUuid")).value(subquery));
+//                    }
                 }
             }
         }
