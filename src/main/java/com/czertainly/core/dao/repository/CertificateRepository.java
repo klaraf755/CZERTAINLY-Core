@@ -5,9 +5,12 @@ import com.czertainly.core.dao.entity.Certificate;
 import com.czertainly.core.dao.entity.CertificateContent;
 import com.czertainly.core.dao.entity.RaProfile;
 import com.czertainly.core.dao.repository.custom.CustomCertificateRepository;
+import com.querydsl.core.types.Predicate;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.querydsl.QuerydslPredicateExecutor;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
@@ -17,7 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public interface CertificateRepository extends SecurityFilterRepository<Certificate, Long>, CustomCertificateRepository {
+public interface CertificateRepository extends SecurityFilterRepository<Certificate, Long>, CustomCertificateRepository, QuerydslPredicateExecutor<Certificate> {
 
     @EntityGraph(attributePaths = {"certificateContent"})
     Optional<Certificate> findByUuid(UUID uuid);
@@ -75,4 +78,6 @@ public interface CertificateRepository extends SecurityFilterRepository<Certific
     Optional<Certificate> findByIssuerDnNormalizedAndSerialNumber(String issuerDnNormalized, String serialNumber);
 
     List<Certificate> findBySubjectDnNormalized(String issuerDnNormalized);
+
+    Page<Certificate> findAll(Predicate predicate, Pageable p);
 }

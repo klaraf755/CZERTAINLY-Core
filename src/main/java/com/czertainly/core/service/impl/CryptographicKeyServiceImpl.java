@@ -42,9 +42,11 @@ import com.czertainly.core.util.CertificateUtil;
 import com.czertainly.core.util.RequestValidatorHelper;
 import com.czertainly.core.util.SearchHelper;
 import com.czertainly.core.util.converter.Sql2PredicateConverter;
+import com.czertainly.core.util.converter.Sql2PredicateConverterQ;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -176,10 +178,15 @@ public class CryptographicKeyServiceImpl implements CryptographicKeyService {
         filter.setParentRefProperty("tokenInstanceReferenceUuid");
         RequestValidatorHelper.revalidateSearchRequestDto(request);
 
+
         // filter keys based on attribute filters
         final List<UUID> objectUUIDs = attributeEngine.getResourceObjectUuidsByFilters(Resource.CRYPTOGRAPHIC_KEY, filter, request.getFilters());
 
         final Pageable p = PageRequest.of(request.getPageNumber() - 1, request.getItemsPerPage());
+
+        com.querydsl.core.types.Predicate predicate = Sql2PredicateConverterQ.mapSearchFilter2Predicates(request.getFilters(), QCryptographicKeyItem.cryptographicKeyItem);
+
+        Page<CryptographicKeyItem> result = cryptographicKeyItemRepository.findAll(predicate, p);
         final List<KeyItemDto> listedKeyDtos = cryptographicKeyItemRepository.findUsingSecurityFilter(filter,
                         List.of(),
                         (root, cb) -> Sql2PredicateConverter.mapSearchFilter2Predicates(request.getFilters(), cb, root, objectUUIDs), p, (root, cb) -> cb.desc(root.get("createdAt")))

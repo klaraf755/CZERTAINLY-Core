@@ -2,14 +2,18 @@ package com.czertainly.core.dao.repository;
 
 import com.czertainly.core.dao.entity.CryptographicKey;
 import com.czertainly.core.dao.entity.CryptographicKeyItem;
+import com.querydsl.core.types.Predicate;
+import org.springframework.data.querydsl.QuerydslPredicateExecutor;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public interface CryptographicKeyItemRepository extends SecurityFilterRepository<CryptographicKeyItem, UUID> {
+public interface CryptographicKeyItemRepository extends SecurityFilterRepository<CryptographicKeyItem, UUID>, QuerydslPredicateExecutor<CryptographicKeyItem> {
 
     Optional<CryptographicKeyItem> findByUuid(UUID uuid);
 
@@ -18,4 +22,6 @@ public interface CryptographicKeyItemRepository extends SecurityFilterRepository
     Optional<CryptographicKeyItem> findByUuidAndCryptographicKey(UUID uuid, CryptographicKey cryptographicKey);
 
     List<CryptographicKeyItem> findByKeyReferenceUuid(UUID keyReferenceUuid);
+
+    Page<CryptographicKeyItem> findAll(Predicate predicate, Pageable pageable);
 }

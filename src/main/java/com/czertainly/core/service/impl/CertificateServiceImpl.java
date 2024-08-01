@@ -49,6 +49,7 @@ import com.czertainly.core.service.*;
 import com.czertainly.core.service.v2.ExtendedAttributeService;
 import com.czertainly.core.util.*;
 import com.czertainly.core.util.converter.Sql2PredicateConverter;
+import com.czertainly.core.util.converter.Sql2PredicateConverterQ;
 import com.czertainly.core.validation.certificate.ICertificateValidator;
 import jakarta.persistence.criteria.*;
 import org.bouncycastle.asn1.ASN1Primitive;
@@ -62,6 +63,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MarkerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Async;
@@ -219,6 +221,12 @@ public class CertificateServiceImpl implements CertificateService {
         setupSecurityFilter(filter);
         RequestValidatorHelper.revalidateSearchRequestDto(request);
         final Pageable p = PageRequest.of(request.getPageNumber() - 1, request.getItemsPerPage());
+
+        com.querydsl.core.types.Predicate predicate = Sql2PredicateConverterQ.mapSearchFilter2Predicates(request.getFilters(), QCertificate.certificate);
+
+        // select * from certificte inner join groups,
+        Page<Certificate> result = certificateRepository.findAll(predicate, p);
+
 
         // filter certificates based on attribute filters
         final List<UUID> objectUUIDs = attributeEngine.getResourceObjectUuidsByFilters(Resource.CERTIFICATE, filter, request.getFilters());
