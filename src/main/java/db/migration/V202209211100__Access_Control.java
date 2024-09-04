@@ -155,12 +155,14 @@ public class V202209211100__Access_Control extends BaseJavaMigration {
         ClassLoader classLoader = getClass().getClassLoader();
         URL resource = classLoader.getResource("application.properties");
         File file = new File(resource.toURI());
-
-        InputStream targetStream = new FileInputStream(file);
-        Properties properties = new Properties();
-        properties.load(targetStream);
-        String[] splitData = ((String) properties.get("auth-service.base-url")).split(AUTH_SERVICE_BASE_URL_PROPERTY);
+        String[] splitData;
+        try (InputStream targetStream = new FileInputStream(file)) {
+            Properties properties = new Properties();
+            properties.load(targetStream);
+            splitData = ((String) properties.get("auth-service.base-url")).split(AUTH_SERVICE_BASE_URL_PROPERTY);
+        }
         return splitData[splitData.length - 1].replace("}", "");
+
     }
 
     private String createClientRoles(String clientUuid, String clientName) {
