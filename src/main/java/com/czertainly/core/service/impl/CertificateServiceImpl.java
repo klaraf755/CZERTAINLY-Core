@@ -49,7 +49,6 @@ import com.czertainly.core.security.authz.SecurityFilter;
 import com.czertainly.core.service.*;
 import com.czertainly.core.service.v2.ExtendedAttributeService;
 import com.czertainly.core.util.*;
-import com.czertainly.core.util.converter.Sql2PredicateConverter;
 import com.czertainly.core.validation.certificate.ICertificateValidator;
 import jakarta.persistence.criteria.*;
 import org.apache.commons.lang3.function.TriFunction;
@@ -91,7 +90,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -401,15 +402,18 @@ public class CertificateServiceImpl implements CertificateService {
             int deletedCount = 0;
             for (String uuid : request.getUuids()) {
                 UUID certificateUuid = UUID.fromString(uuid);
+                TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
                 try {
                     deleteCertificate(SecuredUUID.fromUUID(certificateUuid));
                     ++deletedCount;
+                    transactionManager.commit(status);
                 } catch (Exception e) {
                     logger.error("Unable to delete the certificate {}: {}", certificateUuid, e.getMessage());
                     if (loggedUserUuid == null) {
                         loggedUserUuid = UUID.fromString(AuthHelper.getUserIdentification().getUuid());
                     }
                     notificationProducer.produceNotificationText(Resource.CERTIFICATE, certificateUuid, NotificationRecipient.buildUserNotificationRecipient(loggedUserUuid), "Unable to delete the certificate " + certificateUuid, e.getMessage());
+                    transactionManager.rollback(status);
                 }
             }
             logger.debug("Bulk deleted {} of {} certificates.", deletedCount, request.getUuids().size());
