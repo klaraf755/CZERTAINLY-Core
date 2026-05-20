@@ -40,6 +40,9 @@ public class EventHistory extends UniquelyIdentified {
     @Enumerated(EnumType.STRING)
     private EventStatus status;
 
+    @Column(name = "message")
+    private String message;
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

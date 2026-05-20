@@ -56,6 +56,7 @@ public class EventHistoryMapper {
         dto.setStartedAt(eventHistory.getStartedAt());
         dto.setFinishedAt(eventHistory.getFinishedAt());
         dto.setStatus(eventHistory.getStatus());
+        dto.setMessage(eventHistory.getMessage());
         dto.setObjectsEvaluated(objectsEvaluated);
         dto.setObjectsMatched(objectsMatched);
         dto.setObjectsIgnored(objectsIgnored);
