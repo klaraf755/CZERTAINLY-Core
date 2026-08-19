@@ -25,6 +25,9 @@ public interface CommentRepository extends SecurityFilterRepository<Comment, UUI
 
     boolean existsByResourceAndObjectUuid(Resource resource, UUID objectUuid);
 
+    @Query("SELECT DISTINCT c.authorUuid FROM Comment c WHERE c.uuid = :rootUuid OR c.parentUuid = :rootUuid")
+    List<UUID> findThreadParticipantUuids(@Param("rootUuid") UUID rootUuid);
+
     @Modifying
     @Query("UPDATE Comment c SET c.resolvedAt = :resolvedAt, c.resolvedByUuid = :actorUuid, "
             + "c.resolvedByUsername = :actorUsername WHERE c.uuid = :uuid")
