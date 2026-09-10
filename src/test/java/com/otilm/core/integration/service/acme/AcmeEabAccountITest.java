@@ -124,6 +124,15 @@ class AcmeEabAccountITest extends BaseSpringBootTest {
     }
 
     @Test
+    void aProfileWhoseNewOrderSwitchWasNeverSetStillServesRequests() throws Exception {
+        // Older rows, and any edit that once cleared it, leave the column null; reading it must not fail the request.
+        acmeProfile.setDisableNewOrders(null);
+        acmeProfileRepository.save(acmeProfile);
+
+        Assertions.assertEquals(201, newAccount(null).getStatusCode().value());
+    }
+
+    @Test
     void aProfileWithKeysRefusesAnAccountThatPresentsNoBinding() throws Exception {
         configureKeys(UUID.randomUUID());
 

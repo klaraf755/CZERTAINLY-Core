@@ -1619,7 +1619,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
             throw new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.MALFORMED,
                     "RA Profile is not enabled");
         }
-        if (acmeProfile.isDisableNewOrders()) {
+        if (Boolean.TRUE.equals(acmeProfile.isDisableNewOrders())) {
             ProblemDocument problemDocument = new ProblemDocument(Problem.USER_ACTION_REQUIRED);
             problemDocument.setInstance(acmeProfile.getTermsOfServiceUrl());
             problemDocument.setDetail("Terms of service have changed");

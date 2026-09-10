@@ -276,6 +276,21 @@ class AcmeProfileServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void anEditOmittingTheNewOrderSwitchKeepsTheStoredValue() throws Exception {
+        // Left null, every later ACME request on the profile fails unboxing it.
+        acmeProfile.setDisableNewOrders(true);
+        acmeProfileRepository.save(acmeProfile);
+        AcmeProfileEditRequestDto request = new AcmeProfileEditRequestDto();
+        request.setDescription("edited");
+
+        acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), request);
+
+        Assertions
+                .assertEquals(true,
+                        acmeProfileRepository.findByUuid(acmeProfile.getUuid()).orElseThrow().isDisableNewOrders());
+    }
+
+    @Test
     void aGeneratedEabKeyIsFreshAndLongEnoughForHs256() {
         String first = acmeProfileService.generateEabKey().getKey();
         String second = acmeProfileService.generateEabKey().getKey();

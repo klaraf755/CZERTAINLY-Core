@@ -292,7 +292,6 @@ public class AcmeProfileServiceImpl implements AcmeProfileExternalService, AcmeP
         }
         acmeProfile.setTermsOfServiceUrl(request.getTermsOfServiceUrl());
         acmeProfile.setWebsite(request.getWebsiteUrl());
-        acmeProfile.setDisableNewOrders(request.isTermsOfServiceChangeDisable());
         acmeProfile.setTermsOfServiceChangeUrl(request.getTermsOfServiceChangeUrl());
         acmeProfile.setEabSecretUuids(resolveEabSecrets(request.getEabSecretUuids()));
         requireTermsUrlWhenAgreementIsRequired(acmeProfile);
