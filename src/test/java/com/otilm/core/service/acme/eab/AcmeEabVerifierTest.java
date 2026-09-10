@@ -4,6 +4,7 @@ import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jose.jwk.ECKey;
 import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
+import com.nimbusds.jose.util.Base64URL;
 import com.otilm.api.exception.AcmeProblemDocumentException;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.NotFoundException;
@@ -161,10 +162,11 @@ class AcmeEabVerifierTest {
 
     @Test
     void aKeyTooShortForHs256IsAnInternalError() throws Exception {
-        byte[] shortKey = new byte[16];
+        // Signed under a usable key: only the stored one is too short, which is the configuration fault under test.
+        // A client could not produce a binding under a 128-bit key at all - the signer refuses it.
         when(secretService.getSecretContent(keyUuid))
-                .thenReturn(new SecretKeySecretContent(com.nimbusds.jose.util.Base64URL.encode(shortKey).toString()));
-        ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, shortKey);
+                .thenReturn(new SecretKeySecretContent(Base64URL.encode(new byte[16]).toString()));
+        ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertServerInternal(binding);
     }

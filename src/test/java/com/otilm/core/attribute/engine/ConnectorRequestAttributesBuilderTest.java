@@ -6,7 +6,6 @@ import com.otilm.api.model.common.attribute.common.content.AttributeContentType;
 import com.otilm.api.model.common.attribute.v2.DataAttributeV2;
 import com.otilm.core.service.CredentialInternalService;
 import com.otilm.core.service.ResourceInternalService;
-import com.otilm.core.util.AttributeDefinitionUtils;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,7 +59,9 @@ class ConnectorRequestAttributesBuilderTest {
         order.verify(credentialService).loadFullCredentialData(resolved);
         order.verify(resourceService).loadResourceObjectContentData(resolved);
         verify(attributeEngine, never()).validateUpdateDataAttributes(any(), any(), any(), any());
-        assertEquals(AttributeDefinitionUtils.getClientAttributes(resolved), result);
+        // getClientAttributes maps to fresh instances without value equality, so compare what identifies them.
+        assertEquals(resolved.stream().map(DataAttribute::getName).toList(),
+                result.stream().map(RequestAttribute::getName).toList());
     }
 
     @Test
