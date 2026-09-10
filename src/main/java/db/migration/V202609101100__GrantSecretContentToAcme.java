@@ -12,20 +12,22 @@ import org.flywaydb.core.api.migration.BaseJavaMigration;
 import org.flywaydb.core.api.migration.Context;
 
 /**
- * Grants {@code SECRET:GET_SECRET_CONTENT} and {@code VAULT_PROFILE:MEMBERS} to the {@code acme} role.
+ * Grants the {@code acme} role what reading a secret's content takes.
  * <p>
  * An ACME profile may require External Account Binding, naming the secrets whose content is the HMAC key a binding
  * must verify under. Verifying one therefore reads a secret, and it happens on a newAccount request, which the
  * platform already runs as the {@code acme} system user. Without these grants that read is denied and every account
  * registration against such a profile fails.
  * <p>
- * Two grants, because the read passes two gates: {@code SECRET:GET_SECRET_CONTENT} on the method, and
- * {@code VAULT_PROFILE:MEMBERS} on the secret's source vault profile, which the secret lookup enforces as the parent
- * resource. Granting only the first denies at the parent and surfaces as an internal error with nothing in the ACME
- * response to explain it.
+ * Three grants, because the read passes three gates in turn: {@code SECRET:GET_SECRET_CONTENT} on the method,
+ * {@code VAULT_PROFILE:MEMBERS} on the secret's source vault profile as the secret lookup's parent resource, and
+ * {@code CONNECTOR:DETAIL} when the vault connector request is assembled. Miss any one and the read denies deep in
+ * the call, surfacing as an internal error with nothing in the ACME response to explain it. This is the same set the
+ * {@code attribute-content-resolver} role carries for its own secret-content path, minus the grants that belong to
+ * its other dereference kinds.
  * <p>
- * Both are resource-level: the ACME identity can read any secret's content, not only those a profile names. It is
- * the same breadth the protocol already has over the resources it enrols against, and it keeps the read behind the
+ * All three are resource-level: the ACME identity can read any secret's content, not only those a profile names. It
+ * is the same breadth the protocol already has over the resources it enrols against, and it keeps the read behind the
  * authorization gates every other caller passes rather than behind a bypass.
  */
 // Flyway mandates the V<version>__<Description> class-name format, which cannot match Sonar's S101 identifier pattern.
@@ -42,6 +44,7 @@ public class V202609101100__GrantSecretContentToAcme extends BaseJavaMigration {
         Map<Resource, List<ResourceAction>> addedResourceActions = new EnumMap<>(Resource.class);
         addedResourceActions.put(Resource.SECRET, List.of(ResourceAction.GET_SECRET_CONTENT));
         addedResourceActions.put(Resource.VAULT_PROFILE, List.of(ResourceAction.MEMBERS));
+        addedResourceActions.put(Resource.CONNECTOR, List.of(ResourceAction.DETAIL));
 
         // On a fresh install this migration runs before Core's catalog sync, and the auth service rejects
         // permissions naming an unknown resource/action. Additive no-op where the pair is already known.
