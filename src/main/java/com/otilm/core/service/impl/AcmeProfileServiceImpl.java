@@ -294,7 +294,9 @@ public class AcmeProfileServiceImpl implements AcmeProfileExternalService, AcmeP
         acmeProfile.setTermsOfServiceUrl(request.getTermsOfServiceUrl());
         acmeProfile.setWebsite(request.getWebsiteUrl());
         acmeProfile.setTermsOfServiceChangeUrl(request.getTermsOfServiceChangeUrl());
-        acmeProfile.setEabSecretUuids(resolveEabSecrets(request.getEabSecretUuids()));
+        if (request.getEabSecretUuids() != null) {
+            acmeProfile.setEabSecretUuids(resolveEabSecrets(request.getEabSecretUuids()));
+        }
         requireTermsUrlWhenAgreementIsRequired(acmeProfile);
 
         UUID certificateAssociationUuid = null;

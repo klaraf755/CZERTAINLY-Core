@@ -291,6 +291,28 @@ class AcmeProfileServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void anEditOmittingTheEabSecretsKeepsThemAndAnEmptyListClearsThem() throws Exception {
+        // Omission must not switch the requirement off while the operator is editing something else.
+        UUID secretUuid = UUID.randomUUID();
+        acmeProfile.setEabSecretUuids(List.of(secretUuid));
+        acmeProfileRepository.save(acmeProfile);
+
+        AcmeProfileEditRequestDto unrelated = new AcmeProfileEditRequestDto();
+        unrelated.setDescription("edited");
+        acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), unrelated);
+        Assertions
+                .assertEquals(List.of(secretUuid),
+                        acmeProfileRepository.findByUuid(acmeProfile.getUuid()).orElseThrow().getEabSecretUuids());
+
+        AcmeProfileEditRequestDto cleared = new AcmeProfileEditRequestDto();
+        cleared.setEabSecretUuids(List.of());
+        acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), cleared);
+        AcmeProfile stored = acmeProfileRepository.findByUuid(acmeProfile.getUuid()).orElseThrow();
+        Assertions.assertEquals(List.of(), stored.getEabSecretUuids());
+        Assertions.assertFalse(stored.isExternalAccountRequired());
+    }
+
+    @Test
     void aGeneratedEabKeyIsFreshAndLongEnoughForHs256() {
         String first = acmeProfileService.generateEabKey().getKey();
         String second = acmeProfileService.generateEabKey().getKey();
