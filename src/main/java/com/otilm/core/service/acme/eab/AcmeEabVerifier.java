@@ -8,7 +8,7 @@ import com.otilm.api.model.connector.secrets.content.SecretKeySecretContent;
 import com.otilm.api.model.core.acme.ExternalAccountBinding;
 import com.otilm.api.model.core.acme.Problem;
 import com.otilm.core.dao.entity.acme.AcmeProfile;
-import com.otilm.core.service.SecretInternalService;
+import com.otilm.core.service.SecretExternalService;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -39,10 +39,10 @@ public class AcmeEabVerifier {
 
     private static final String UNAVAILABLE = "The External Account Binding could not be verified at this time";
 
-    private SecretInternalService secretService;
+    private SecretExternalService secretService;
 
     @Autowired
-    public void setSecretService(SecretInternalService secretService) {
+    public void setSecretService(SecretExternalService secretService) {
         this.secretService = secretService;
     }
 
@@ -51,7 +51,8 @@ public class AcmeEabVerifier {
      *
      * <p>
      * Runs outside the caller's transaction: reading a key goes to the vault over HTTP, and the newAccount transaction
-     * must not be held open for that.
+     * must not be held open for that. The read is authorized as the {@code acme} system user every ACME request runs
+     * as, which the platform grants {@code SECRET:GET_SECRET_CONTENT}.
      *
      * @return the UUID of the secret the binding verified under
      * @throws AcmeProblemDocumentException {@code externalAccountRequired} when no binding was sent,
@@ -96,7 +97,7 @@ public class AcmeEabVerifier {
     private byte[] macKeyOf(AcmeProfile acmeProfile, UUID keyUuid) throws AcmeProblemDocumentException {
         SecretContent content;
         try {
-            content = secretService.getSecretContentInternal(keyUuid);
+            content = secretService.getSecretContent(keyUuid);
         } catch (Exception e) {
             // The key is configured but unreadable — an unavailable vault, a disabled secret, a deleted one. Nothing
             // the client can act on, and the underlying message may describe platform internals.

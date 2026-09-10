@@ -898,22 +898,6 @@ public class SecretServiceImpl implements SecretExternalService, SecretInternalS
     @Override
     @ExternalAuthorization(resource = Resource.SECRET, action = ResourceAction.GET_SECRET_CONTENT)
     public SecretContent getSecretContent(UUID uuid) throws NotFoundException, ConnectorException, AttributeException {
-        return readSecretContent(uuid);
-    }
-
-    @Override
-    public SecretContent getSecretContentInternal(UUID uuid)
-            throws NotFoundException, ConnectorException, AttributeException {
-        return readSecretContent(uuid);
-    }
-
-    /**
-     * Reads the content from the vault without a resource-level authorization check. Callable only from inside the
-     * platform, for a component reading a secret its own configuration names — the caller has no say in which secret
-     * that is, so there is no caller identity to authorize. The state gates below still apply.
-     */
-    private SecretContent readSecretContent(UUID uuid)
-            throws NotFoundException, ConnectorException, AttributeException {
         Secret secret = getSecretEntity(uuid);
         if (invalidSecretState(secret)) {
             throw new ValidationException("Secret %s is in state %s and cannot be retrieved"

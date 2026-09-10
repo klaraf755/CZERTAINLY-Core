@@ -12,7 +12,7 @@ import com.otilm.api.model.connector.secrets.content.GenericSecretContent;
 import com.otilm.api.model.connector.secrets.content.SecretKeySecretContent;
 import com.otilm.api.model.core.acme.ExternalAccountBinding;
 import com.otilm.core.dao.entity.acme.AcmeProfile;
-import com.otilm.core.service.SecretInternalService;
+import com.otilm.core.service.SecretExternalService;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -31,7 +31,7 @@ class AcmeEabVerifierTest {
 
     private static final URI NEW_ACCOUNT = URI.create("https://acme.example/api/acme/profile/new-account");
 
-    private SecretInternalService secretService;
+    private SecretExternalService secretService;
     private AcmeEabVerifier verifier;
 
     private AcmeProfile acmeProfile;
@@ -42,7 +42,7 @@ class AcmeEabVerifierTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        secretService = mock(SecretInternalService.class);
+        secretService = mock(SecretExternalService.class);
         verifier = new AcmeEabVerifier();
         verifier.setSecretService(secretService);
 
@@ -54,7 +54,7 @@ class AcmeEabVerifierTest {
         acmeProfile = new AcmeProfile();
         acmeProfile.setName("eab-profile");
         acmeProfile.setEabSecretUuids(List.of(keyUuid));
-        when(secretService.getSecretContentInternal(keyUuid)).thenReturn(new SecretKeySecretContent(keyText));
+        when(secretService.getSecretContent(keyUuid)).thenReturn(new SecretKeySecretContent(keyText));
     }
 
     @Test
@@ -66,7 +66,7 @@ class AcmeEabVerifierTest {
 
     @Test
     void aGenericSecretHoldsTheKeyJustAsWell() throws Exception {
-        when(secretService.getSecretContentInternal(keyUuid)).thenReturn(new GenericSecretContent(keyText));
+        when(secretService.getSecretContent(keyUuid)).thenReturn(new GenericSecretContent(keyText));
         ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertEquals(keyUuid, verifier.verify(acmeProfile, binding, accountKey.toPublicJWK(), NEW_ACCOUNT));
@@ -87,7 +87,7 @@ class AcmeEabVerifierTest {
                 .build(UUID.randomUUID(), NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertUnauthorized(binding, accountKey.toPublicJWK(), NEW_ACCOUNT);
-        verify(secretService, never()).getSecretContentInternal(any());
+        verify(secretService, never()).getSecretContent(any());
     }
 
     @Test
@@ -137,7 +137,7 @@ class AcmeEabVerifierTest {
 
     @Test
     void anUnreadableKeyIsAnInternalErrorRatherThanARejection() throws Exception {
-        when(secretService.getSecretContentInternal(keyUuid)).thenThrow(new NotFoundException("Secret", keyUuid));
+        when(secretService.getSecretContent(keyUuid)).thenThrow(new NotFoundException("Secret", keyUuid));
         ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertServerInternal(binding);
@@ -145,7 +145,7 @@ class AcmeEabVerifierTest {
 
     @Test
     void anUnavailableVaultIsAnInternalErrorRatherThanARejection() throws Exception {
-        when(secretService.getSecretContentInternal(keyUuid)).thenThrow(new ConnectorException("vault is down"));
+        when(secretService.getSecretContent(keyUuid)).thenThrow(new ConnectorException("vault is down"));
         ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertServerInternal(binding);
@@ -153,8 +153,7 @@ class AcmeEabVerifierTest {
 
     @Test
     void aSecretThatHoldsNoKeyIsAnInternalError() throws Exception {
-        when(secretService.getSecretContentInternal(keyUuid))
-                .thenReturn(new BasicAuthSecretContent("user", "password"));
+        when(secretService.getSecretContent(keyUuid)).thenReturn(new BasicAuthSecretContent("user", "password"));
         ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, macKey);
 
         assertServerInternal(binding);
@@ -163,7 +162,7 @@ class AcmeEabVerifierTest {
     @Test
     void aKeyTooShortForHs256IsAnInternalError() throws Exception {
         byte[] shortKey = new byte[16];
-        when(secretService.getSecretContentInternal(keyUuid))
+        when(secretService.getSecretContent(keyUuid))
                 .thenReturn(new SecretKeySecretContent(com.nimbusds.jose.util.Base64URL.encode(shortKey).toString()));
         ExternalAccountBinding binding = EabTestUtil.build(keyUuid, NEW_ACCOUNT.toString(), accountKey, shortKey);
 
@@ -175,7 +174,7 @@ class AcmeEabVerifierTest {
         UUID secondUuid = UUID.randomUUID();
         String secondKeyText = AcmeEabKeys.generate();
         acmeProfile.setEabSecretUuids(List.of(keyUuid, secondUuid));
-        when(secretService.getSecretContentInternal(secondUuid)).thenReturn(new SecretKeySecretContent(secondKeyText));
+        when(secretService.getSecretContent(secondUuid)).thenReturn(new SecretKeySecretContent(secondKeyText));
         ExternalAccountBinding binding = EabTestUtil
                 .build(secondUuid, NEW_ACCOUNT.toString(), accountKey, AcmeEabKeys.decode(secondKeyText));
 
