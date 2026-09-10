@@ -23,6 +23,7 @@ import com.otilm.core.attribute.engine.AttributeOperation;
 import com.otilm.core.attribute.engine.records.ObjectAttributeContentInfo;
 import com.otilm.core.dao.entity.ProtocolCertificateAssociations;
 import com.otilm.core.dao.entity.RaProfile;
+import com.otilm.core.dao.entity.Secret;
 import com.otilm.core.dao.entity.UniquelyIdentifiedAndAudited;
 import com.otilm.core.dao.entity.acme.AcmeProfile;
 import com.otilm.core.dao.entity.acme.AcmeProfile_;
@@ -327,24 +328,26 @@ public class AcmeProfileServiceImpl implements AcmeProfileExternalService, AcmeP
 
     /**
      * Registering a secret as a binding key delegates a read of its content to the platform, which then performs that
-     * read on every newAccount without a caller to authorize. The operator doing the registering must therefore be
-     * allowed to read the content themselves. Every UUID must also name a secret that exists, so a profile cannot
-     * advertise externalAccountRequired against a key the platform could never read. Duplicates are folded away; order
-     * is not meaningful.
+     * read on every newAccount without a caller to authorize. The operator doing the registering must therefore be able
+     * to perform that read themselves, which takes both of the permissions the read is gated on: the content permission
+     * on the secret, and membership of the vault profile it is sourced from. Checking only the first would let an
+     * operator who cannot read a secret still put it in charge of a profile.
+     * <p>
+     * Every UUID must also name a secret that exists, so a profile cannot advertise externalAccountRequired against a
+     * key the platform could never read. Duplicates are folded away; order is not meaningful.
      */
     private List<UUID> resolveEabSecrets(List<UUID> requested) {
         if (requested == null || requested.isEmpty()) {
             return new ArrayList<>();
         }
         List<UUID> distinct = requested.stream().filter(Objects::nonNull).distinct().toList();
+        // Before the lookup, so a caller who may not read secrets at all learns nothing about which UUIDs exist.
         authorizationEnforcer
                 .enforce(Resource.SECRET, ResourceAction.GET_SECRET_CONTENT,
                         distinct.stream().map(SecuredUUID::fromUUID).toList());
-        Set<UUID> found = secretRepository
-                .findByUuidIn(distinct)
-                .stream()
-                .map(UniquelyIdentifiedAndAudited::getUuid)
-                .collect(Collectors.toSet());
+
+        List<Secret> secrets = secretRepository.findByUuidIn(distinct);
+        Set<UUID> found = secrets.stream().map(UniquelyIdentifiedAndAudited::getUuid).collect(Collectors.toSet());
         String missing = distinct
                 .stream()
                 .filter(secretUuid -> !found.contains(secretUuid))
@@ -354,6 +357,16 @@ public class AcmeProfileServiceImpl implements AcmeProfileExternalService, AcmeP
             throw new ValidationException(
                     ValidationError.create("External Account Binding secrets not found: %s".formatted(missing)));
         }
+
+        authorizationEnforcer
+                .enforce(Resource.VAULT_PROFILE, ResourceAction.MEMBERS,
+                        secrets
+                                .stream()
+                                .map(Secret::getSourceVaultProfileUuid)
+                                .filter(Objects::nonNull)
+                                .distinct()
+                                .map(SecuredUUID::fromUUID)
+                                .toList());
         return new ArrayList<>(distinct);
     }
 

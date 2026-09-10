@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.otilm.api.exception.AcmeProblemDocumentException;
+import com.otilm.api.model.client.acme.AcmeProfileEditRequestDto;
 import com.otilm.api.model.client.connector.v2.ConnectorVersion;
 import com.otilm.api.model.connector.secrets.SecretType;
 import com.otilm.api.model.connector.secrets.content.SecretKeySecretContent;
@@ -28,8 +29,10 @@ import com.otilm.core.dao.repository.VaultInstanceRepository;
 import com.otilm.core.dao.repository.VaultProfileRepository;
 import com.otilm.core.dao.repository.acme.AcmeNonceRepository;
 import com.otilm.core.model.auth.ResourceAction;
+import com.otilm.core.security.authz.SecuredUUID;
 import com.otilm.core.security.authz.opa.dto.OpaRequestedResource;
 import com.otilm.core.security.authz.opa.dto.OpaResourceAccessResult;
+import com.otilm.core.service.AcmeProfileExternalService;
 import com.otilm.core.service.acme.AcmeExternalService;
 import com.otilm.core.service.acme.AcmeTestUtil;
 import com.otilm.core.service.acme.eab.AcmeEabKeys;
@@ -47,6 +50,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -83,6 +87,8 @@ class AcmeEabAuthorizationITest extends BaseSpringBootTest {
     private AcmeExternalService acmeService;
     @Autowired
     private AcmeProfileRepository acmeProfileRepository;
+    @Autowired
+    private AcmeProfileExternalService acmeProfileService;
     @Autowired
     private AcmeNonceRepository acmeNonceRepository;
     @Autowired
@@ -217,6 +223,28 @@ class AcmeEabAuthorizationITest extends BaseSpringBootTest {
 
         verify(opaClient, atLeastOnce())
                 .checkResourceAccess(any(), argThat(asks(Resource.CONNECTOR, ResourceAction.DETAIL)), any(), any());
+    }
+
+    @Test
+    void assigningAKeyDemandsBothPermissionsTheReadItself() {
+        // The operator delegating the read must be able to perform it, which takes the same two gates the read
+        // passes. Checking only the content permission would let someone who cannot read a secret put it in charge
+        // of a profile.
+        AcmeProfileEditRequestDto request = new AcmeProfileEditRequestDto();
+        request.setEabSecretUuids(List.of(secret.getUuid()));
+        SecuredUUID profileUuid = SecuredUUID
+                .fromUUID(acmeProfileRepository.findByName(PROFILE_NAME).orElseThrow().getUuid());
+
+        deny(Resource.SECRET, ResourceAction.GET_SECRET_CONTENT);
+        Assertions
+                .assertThrows(AccessDeniedException.class,
+                        () -> acmeProfileService.editAcmeProfile(profileUuid, request));
+
+        mockSuccessfulCheckResourceAccess();
+        deny(Resource.VAULT_PROFILE, ResourceAction.MEMBERS);
+        Assertions
+                .assertThrows(AccessDeniedException.class,
+                        () -> acmeProfileService.editAcmeProfile(profileUuid, request));
     }
 
     /**
