@@ -76,7 +76,7 @@ public class DatabaseMigration {
         V202607031200__CreateAttributeContentResolverUserAndPermissions(1703465896, false),
         V202608071000__RegistrationSubjectDnNormalizedMigration(612311821),
         V202608311000__GrantRaProfileMembersToAttributeContentResolver(-2072942854),
-        V202609101100__GrantSecretContentToAcme(965375541);
+        V202609101100__GrantSecretContentToAcme(-803472882);
 
         private final int checksum;
 
