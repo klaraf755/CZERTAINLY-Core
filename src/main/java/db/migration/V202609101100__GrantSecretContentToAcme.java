@@ -19,16 +19,10 @@ import org.flywaydb.core.api.migration.Context;
  * platform already runs as the {@code acme} system user. Without these grants that read is denied and every account
  * registration against such a profile fails.
  * <p>
- * Four grants, because the read passes four gates in turn: {@code SECRET:GET_SECRET_CONTENT} on the method,
+ * Three grants, because the read passes three gates in turn: {@code SECRET:GET_SECRET_CONTENT} on the method,
  * {@code VAULT_PROFILE:MEMBERS} on the secret's source vault profile as the secret lookup's parent resource, and
- * then, while the vault connector request is assembled, {@code CONNECTOR:DETAIL} and {@code CREDENTIAL:DETAIL}.
- * <p>
- * The credential grant buys nothing a vault-secret request uses: assembling one dereferences no credential. It is
- * needed because the gate sits on {@code loadFullCredentialData} itself, which the shared dereference skeleton calls
- * unconditionally, so the check runs before the method can find that there is nothing to dereference. Miss any one
- * of the four and the read denies deep in the call, surfacing as an internal error with nothing in the ACME response
- * to explain it. This is the set the {@code attribute-content-resolver} role carries for its own secret-content
- * path, minus the grants that belong to its other dereference kinds.
+ * {@code CONNECTOR:DETAIL} when the vault connector request is assembled. Miss any one and the read denies deep in
+ * the call, surfacing as an internal error with nothing in the ACME response to explain it.
  * <p>
  * All three are resource-level: the ACME identity can read any secret's content, not only those a profile names. It
  * is the same breadth the protocol already has over the resources it enrols against, and it keeps the read behind the
@@ -49,7 +43,6 @@ public class V202609101100__GrantSecretContentToAcme extends BaseJavaMigration {
         addedResourceActions.put(Resource.SECRET, List.of(ResourceAction.GET_SECRET_CONTENT));
         addedResourceActions.put(Resource.VAULT_PROFILE, List.of(ResourceAction.MEMBERS));
         addedResourceActions.put(Resource.CONNECTOR, List.of(ResourceAction.DETAIL));
-        addedResourceActions.put(Resource.CREDENTIAL, List.of(ResourceAction.DETAIL));
 
         // On a fresh install this migration runs before Core's catalog sync, and the auth service rejects
         // permissions naming an unknown resource/action. Additive no-op where the pair is already known.
