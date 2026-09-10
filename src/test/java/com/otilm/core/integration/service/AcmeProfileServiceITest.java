@@ -38,6 +38,7 @@ import com.otilm.core.security.authz.SecuredUUID;
 import com.otilm.core.security.authz.SecurityFilter;
 import com.otilm.core.service.AcmeProfileExternalService;
 import com.otilm.core.service.AcmeProfileInternalService;
+import com.otilm.core.service.acme.eab.AcmeEabKeys;
 import com.otilm.core.util.BaseSpringBootTest;
 import java.util.List;
 import java.util.UUID;
@@ -222,6 +223,65 @@ class AcmeProfileServiceITest extends BaseSpringBootTest {
         dto = acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), request);
         Assertions.assertNotNull(dto);
         Assertions.assertNotNull(dto.getCertificateAssociations());
+    }
+
+    @Test
+    void requiringTermsAgreementNeedsATermsUrlOnCreateAndEdit() throws Exception {
+        AcmeProfileRequestDto create = new AcmeProfileRequestDto();
+        create.setName("termsWithoutUrl");
+        create.setRequireTermsOfService(true);
+        Assertions.assertThrows(ValidationException.class, () -> acmeProfileService.createAcmeProfile(create));
+
+        create.setTermsOfServiceUrl("https://acme.example/terms");
+        Assertions.assertNotNull(acmeProfileService.createAcmeProfile(create));
+
+        AcmeProfileEditRequestDto edit = new AcmeProfileEditRequestDto();
+        edit.setRequireTermsOfService(true);
+        Assertions
+                .assertThrows(ValidationException.class,
+                        () -> acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), edit));
+    }
+
+    @Test
+    void aProfileWithNoEabSecretsDoesNotRequireExternalAccountBinding() throws Exception {
+        AcmeProfileRequestDto request = new AcmeProfileRequestDto();
+        request.setName("openRegistration");
+
+        AcmeProfileDto dto = acmeProfileService.createAcmeProfile(request);
+
+        Assertions.assertEquals(List.of(), dto.getEabSecretUuids());
+        Assertions
+                .assertFalse(acmeProfileRepository
+                        .findByUuid(UUID.fromString(dto.getUuid()))
+                        .orElseThrow()
+                        .isExternalAccountRequired());
+    }
+
+    @Test
+    void anEabSecretThatDoesNotExistIsRejectedOnCreateAndEdit() {
+        UUID missing = UUID.randomUUID();
+        AcmeProfileRequestDto create = new AcmeProfileRequestDto();
+        create.setName("unknownEabSecret");
+        create.setEabSecretUuids(List.of(missing));
+
+        ValidationException onCreate = Assertions
+                .assertThrows(ValidationException.class, () -> acmeProfileService.createAcmeProfile(create));
+        Assertions.assertTrue(onCreate.getMessage().contains(missing.toString()));
+
+        AcmeProfileEditRequestDto edit = new AcmeProfileEditRequestDto();
+        edit.setEabSecretUuids(List.of(missing));
+        Assertions
+                .assertThrows(ValidationException.class,
+                        () -> acmeProfileService.editAcmeProfile(acmeProfile.getSecuredUuid(), edit));
+    }
+
+    @Test
+    void aGeneratedEabKeyIsFreshAndLongEnoughForHs256() {
+        String first = acmeProfileService.generateEabKey().getKey();
+        String second = acmeProfileService.generateEabKey().getKey();
+
+        Assertions.assertNotEquals(first, second);
+        Assertions.assertTrue(AcmeEabKeys.decode(first).length >= 32);
     }
 
     private void setUpOldConnector() {

@@ -2,6 +2,7 @@ package com.otilm.core.service.acme.impl;
 
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSObject;
+import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.util.Base64URL;
 import com.otilm.api.exception.AcmeProblemDocumentException;
 import com.otilm.api.exception.AttributeException;
@@ -69,6 +70,7 @@ import com.otilm.core.service.acme.AcmeConstants;
 import com.otilm.core.service.acme.AcmeDnsChallengeValidator;
 import com.otilm.core.service.acme.AcmeExternalService;
 import com.otilm.core.service.acme.ChallengeValidationResult;
+import com.otilm.core.service.acme.eab.AcmeEabVerifier;
 import com.otilm.core.service.acme.message.AcmeJwsRequest;
 import com.otilm.core.service.v2.ClientOperationInternalService;
 import com.otilm.core.service.writer.AcmeChallengeWriter;
@@ -109,6 +111,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x500.style.BCStyle;
@@ -150,6 +153,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
     private ClientOperationInternalService clientOperationService;
     private CertificateInternalService certificateService;
     private AcmeChallengeWriter acmeChallengeWriter;
+    private AcmeEabVerifier acmeEabVerifier;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -160,6 +164,11 @@ public class AcmeServiceImpl implements AcmeExternalService {
     @Autowired
     public void setAcmeChallengeWriter(AcmeChallengeWriter acmeChallengeWriter) {
         this.acmeChallengeWriter = acmeChallengeWriter;
+    }
+
+    @Autowired
+    public void setAcmeEabVerifier(AcmeEabVerifier acmeEabVerifier) {
+        this.acmeEabVerifier = acmeEabVerifier;
     }
 
     @Autowired
@@ -305,7 +314,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
                 logger.debug("Request to create a new Account");
                 account = addNewAccount(acmeProfileName,
                         AcmePublicKeyProcessor.publicKeyPemStringFromObject(jwsRequest.getPublicKey()), accountRequest,
-                        isRaProfileBased);
+                        isRaProfileBased, jwsRequest.getJwk(), requestUri);
             }
         }
 
@@ -929,7 +938,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
         DirectoryMeta meta = new DirectoryMeta();
         meta.setCaaIdentities(new String[0]);
         meta.setTermsOfService(acmeProfile.getTermsOfServiceUrl());
-        meta.setExternalAccountRequired(false);
+        meta.setExternalAccountRequired(acmeProfile.isExternalAccountRequired());
         meta.setWebsite(acmeProfile.getWebsite());
         logger.debug("Directory meta: {}", meta);
         return meta;
@@ -958,7 +967,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
     }
 
     private AcmeAccount addNewAccount(String profileName, String publicKey, NewAccountRequest accountRequest,
-            boolean isRaProfileBased) throws AcmeProblemDocumentException {
+            boolean isRaProfileBased, JWK accountKey, URI requestUri) throws AcmeProblemDocumentException {
         AcmeRaProfiles acmeRaProfiles = getProfiles(profileName, isRaProfileBased);
         AcmeProfile acmeProfile = acmeRaProfiles.acmeProfile;
         RaProfile raProfileToUse = acmeRaProfiles.raProfile;
@@ -971,7 +980,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
         String accountId = AcmeRandomGeneratorAndValidator.generateRandomId();
         AcmeAccount oldAccount = acmeAccountRepository.findByPublicKey(publicKey);
         if (acmeProfile.isRequireContact() != null && acmeProfile.isRequireContact()
-                && accountRequest.getContact().isEmpty()) {
+                && (accountRequest.getContact() == null || accountRequest.getContact().isEmpty())) {
             logger.error("Contact not found for Account: {}", accountRequest);
             {
                 throw new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.INVALID_CONTACT,
@@ -979,8 +988,10 @@ public class AcmeServiceImpl implements AcmeExternalService {
             }
         }
 
+        // Clients agree to terms only when the directory advertises them, so the requirement binds only with a URL.
         if (acmeProfile.isRequireTermsOfService() != null && acmeProfile.isRequireTermsOfService()
-                && accountRequest.isTermsOfServiceAgreed()) {
+                && acmeProfile.getTermsOfServiceUrl() != null && !acmeProfile.getTermsOfServiceUrl().isBlank()
+                && !accountRequest.isTermsOfServiceAgreed()) {
             logger.error("Terms of Service not agreed for the new Account: {}", accountRequest);
             {
                 throw new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.USER_ACTION_REQUIRED,
@@ -1000,7 +1011,14 @@ public class AcmeServiceImpl implements AcmeExternalService {
         } else {
             return oldAccount;
         }
+        // The binding is the account's admission: verified before any row exists, so a rejected one leaves
+        // nothing behind. Its key is read from the vault, which is why the verifier runs outside this transaction.
+        UUID eabSecretUuid = acmeProfile.isExternalAccountRequired()
+                ? acmeEabVerifier
+                        .verify(acmeProfile, accountRequest.getExternalAccountBinding(), accountKey, requestUri)
+                : null;
         AcmeAccount account = new AcmeAccount();
+        account.setEabSecretUuid(eabSecretUuid);
         account.setAcmeProfile(acmeProfile);
         account.setEnabled(true);
         account.setStatus(AccountStatus.VALID);
@@ -1009,7 +1027,9 @@ public class AcmeServiceImpl implements AcmeExternalService {
         account.setPublicKey(publicKey);
         account.setDefaultRaProfile(!isRaProfileBased);
         account.setAccountId(accountId);
-        account.setContact(SerializationUtil.serialize(accountRequest.getContact()));
+        account
+                .setContact(SerializationUtil
+                        .serialize(accountRequest.getContact() != null ? accountRequest.getContact() : List.of()));
         acmeAccountRepository.save(account);
         logger.debug("ACME Account created: {}", account);
         return account;
