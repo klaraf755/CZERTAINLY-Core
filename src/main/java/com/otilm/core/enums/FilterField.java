@@ -83,6 +83,7 @@ import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.model.cbom.CryptoAssetIdentityGuard;
 import jakarta.persistence.metamodel.Attribute;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import lombok.Getter;
 
@@ -328,7 +329,7 @@ public enum FilterField {
 
     // Comment
     COMMENT_HOST_RESOURCE(Resource.COMMENT, null, null, ResourceObjectAssociation_.resource, "Host Resource",
-            SearchFieldTypeEnum.LIST, Resource.class),
+            SearchFieldTypeEnum.LIST, Resource.class, Resource.getCommentableResources()),
     COMMENT_PARENT(Resource.COMMENT, null, null, Comment_.parentUuid, "Parent Comment", SearchFieldTypeEnum.PRESENCE),
     COMMENT_AUTHOR(Resource.COMMENT, Resource.USER, null, Comment_.authorUsername, "Author", SearchFieldTypeEnum.LIST),
     COMMENT_BODY(Resource.COMMENT, null, null, Comment_.body, "Body", SearchFieldTypeEnum.STRING),
@@ -496,6 +497,7 @@ public enum FilterField {
     private final String label;
     private final String[] jsonPath;
     private final Class<? extends IPlatformEnum> enumClass;
+    private final IPlatformEnum[] enumValues;
     private final boolean settable;
     private final Object expectedValue;
 
@@ -515,10 +517,29 @@ public enum FilterField {
         this(rootResource, fieldResource, joinAttributes, fieldAttribute, label, type, enumClass, null, false, null);
     }
 
+    /**
+     * A list field that offers only some constants of its enum: the rest could never match anything, and a condition
+     * built on one of them would save and then silently never fire.
+     */
+    FilterField(final Resource rootResource, final Resource fieldResource, final List<Attribute> joinAttributes,
+            final Attribute fieldAttribute, final String label, final SearchFieldTypeEnum type,
+            final Class<? extends IPlatformEnum> enumClass, final Collection<? extends IPlatformEnum> enumValues) {
+        this(rootResource, fieldResource, joinAttributes, fieldAttribute, label, type, enumClass, null, false, null,
+                enumValues.toArray(IPlatformEnum[]::new));
+    }
+
     FilterField(final Resource rootResource, final Resource fieldResource, final List<Attribute> joinAttributes,
             final Attribute fieldAttribute, final String label, final SearchFieldTypeEnum type,
             final Class<? extends IPlatformEnum> enumClass, final Object expectedValue, final boolean settable,
             final String[] jsonPath) {
+        this(rootResource, fieldResource, joinAttributes, fieldAttribute, label, type, enumClass, expectedValue,
+                settable, jsonPath, null);
+    }
+
+    FilterField(final Resource rootResource, final Resource fieldResource, final List<Attribute> joinAttributes,
+            final Attribute fieldAttribute, final String label, final SearchFieldTypeEnum type,
+            final Class<? extends IPlatformEnum> enumClass, final Object expectedValue, final boolean settable,
+            final String[] jsonPath, final IPlatformEnum[] enumValues) {
         this.rootResource = rootResource;
         this.fieldResource = fieldResource;
         this.joinAttributes = joinAttributes == null ? List.of() : joinAttributes;
@@ -527,8 +548,14 @@ public enum FilterField {
         this.type = type;
         this.jsonPath = jsonPath;
         this.enumClass = enumClass;
+        this.enumValues = enumValues;
         this.settable = settable;
         this.expectedValue = expectedValue;
+    }
+
+    /** The values a list field backed by an enum offers: the subset it declares, or every constant otherwise. */
+    public IPlatformEnum[] getEnumValues() {
+        return enumValues != null ? enumValues : enumClass.getEnumConstants();
     }
 
     public boolean isNativeArrayField() {

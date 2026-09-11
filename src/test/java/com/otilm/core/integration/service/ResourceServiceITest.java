@@ -35,6 +35,7 @@ import com.otilm.api.model.core.other.ResourceDto;
 import com.otilm.api.model.core.other.ResourceEvent;
 import com.otilm.api.model.core.other.ResourceEventDto;
 import com.otilm.api.model.core.search.SearchFieldDataByGroupDto;
+import com.otilm.api.model.core.search.SearchFieldDataDto;
 import com.otilm.core.dao.entity.AttributeContent2Object;
 import com.otilm.core.dao.entity.AttributeContentItem;
 import com.otilm.core.dao.entity.AttributeDefinition;
@@ -79,6 +80,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authorization.AuthorizationDeniedException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
@@ -363,6 +365,21 @@ class ResourceServiceITest extends BaseSpringBootTest {
      * this mismatch, a missing {@code ResourceToClass} constant, or the next one -- into a build failure, which is why
      * this asserts nothing about the cause.
      */
+    @Test
+    void commentHostResourceOffersOnlyTheCommentableResources() throws NotFoundException {
+        SearchFieldDataDto hostResource = resourceService
+                .listResourceRuleFilterFields(Resource.COMMENT, false)
+                .stream()
+                .flatMap(group -> group.getSearchFieldData().stream())
+                .filter(field -> FilterField.COMMENT_HOST_RESOURCE.name().equals(field.getFieldIdentifier()))
+                .findFirst()
+                .orElseThrow();
+
+        Object[] offered = (Object[]) hostResource.getValue();
+        assertThat(offered).containsExactlyInAnyOrder(Resource.getCommentableResources().toArray());
+        assertThat(offered).doesNotContain(Resource.NONE, Resource.ANY, Resource.COMMENT, Resource.CERTIFICATE_REQUEST);
+    }
+
     @Test
     void everyResourceWithFilterFieldsCanBeListed() {
         List<Resource> declared = Arrays
