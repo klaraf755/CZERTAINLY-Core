@@ -82,6 +82,15 @@ class ExternalAccountBindingJwsTest {
     }
 
     @Test
+    void aMacThatCannotBeEvaluatedIsNotReportedAsAWrongMac() throws JOSEException {
+        // A provider or verifier fault must not reach a client holding a good credential as a rejection.
+        ExternalAccountBindingJws jws = ExternalAccountBindingJws
+                .parse(EabTestUtil.build(KID, URL, accountKey, macKey));
+
+        assertThrows(UnusableEabKeyException.class, () -> jws.verify(new byte[0]));
+    }
+
+    @Test
     void keyTooShortForHs256IsAConfigurationFaultNotAMismatch() throws JOSEException {
         ExternalAccountBindingJws jws = ExternalAccountBindingJws
                 .parse(EabTestUtil.build(KID, URL, accountKey, macKey));

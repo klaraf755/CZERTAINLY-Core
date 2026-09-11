@@ -664,6 +664,9 @@ public class SecretServiceImpl implements SecretExternalService, SecretInternalS
         if (!isApproved) {
             checkDeleteSecretPermissions();
         }
+        // Repeated here, not only where the delete was requested: the two are separated by the queue and possibly
+        // by an approval, and a profile can claim the secret in between.
+        refuseWhenBoundToAcmeProfile(secretUuid, secret.getName());
         // Delete secret from vaults
         if (!invalidSecretState(secret) && deleteInVaults) {
             List<VaultProfile> vaultProfiles = new ArrayList<>(

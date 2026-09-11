@@ -11,8 +11,6 @@ import com.otilm.api.model.core.acme.ExternalAccountBinding;
 import java.text.ParseException;
 import java.util.Objects;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The External Account Binding JWS of a newAccount request (RFC 8555 section 7.3.4), parsed once: an HS256 flattened
@@ -20,8 +18,6 @@ import org.slf4j.LoggerFactory;
  * key as a JWK. Pure parsing and verification, no platform state.
  */
 public final class ExternalAccountBindingJws {
-
-    private static final Logger logger = LoggerFactory.getLogger(ExternalAccountBindingJws.class);
 
     private final JWSObject jws;
     private final JWK boundAccountKey;
@@ -95,8 +91,8 @@ public final class ExternalAccountBindingJws {
     /**
      * Whether the MAC verifies under {@code key}.
      *
-     * @throws UnusableEabKeyException when {@code key} is shorter than the HS256 minimum, so no binding could ever
-     * verify under it
+     * @throws UnusableEabKeyException when the MAC cannot be evaluated at all — a key shorter than the HS256 minimum,
+     * or a fault in the provider. Neither is a wrong MAC, and neither should reach a client as one.
      */
     public boolean verify(byte[] key) {
         try {
@@ -105,9 +101,8 @@ public final class ExternalAccountBindingJws {
             throw new UnusableEabKeyException("binding key is shorter than the HS256 minimum key length", e);
         } catch (JOSEException e) {
             // Anything other than a short key is a fault in the JCA HMAC provider or the verifier, not a wrong MAC.
-            // It reaches the client as the same generic rejection, so without this line it leaves no trace at all.
-            logger.warn("External Account Binding MAC could not be evaluated", e);
-            return false;
+            // Returning false here would tell a client with a perfectly good credential that it was rejected.
+            throw new UnusableEabKeyException("the binding MAC could not be evaluated", e);
         }
     }
 }
