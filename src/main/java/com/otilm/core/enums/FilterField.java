@@ -84,7 +84,9 @@ import com.otilm.core.model.cbom.CryptoAssetIdentityGuard;
 import jakarta.persistence.metamodel.Attribute;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import lombok.Getter;
 
 @Getter
@@ -283,10 +285,11 @@ public enum FilterField {
     AUDIT_LOG_ACTOR_NAME(Resource.AUDIT_LOG, null, null, AuditLog_.actorName, "Actor name", SearchFieldTypeEnum.STRING),
     AUDIT_LOG_ACTOR_AUTH_METHOD(Resource.AUDIT_LOG, null, null, AuditLog_.actorAuthMethod, "Actor Auth method",
             SearchFieldTypeEnum.LIST, AuthMethod.class),
+    // NONE is a recorded resource for module-level operations; an absent affiliated resource is stored as no value
     AUDIT_LOG_RESOURCE(Resource.AUDIT_LOG, null, null, AuditLog_.resource, "Resource", SearchFieldTypeEnum.LIST,
-            Resource.class),
+            Resource.class, resourcesExcept(Resource.ANY)),
     AUDIT_LOG_AFFILIATED_RESOURCE(Resource.AUDIT_LOG, null, null, AuditLog_.affiliatedResource, "Affiliated resource",
-            SearchFieldTypeEnum.LIST, Resource.class),
+            SearchFieldTypeEnum.LIST, Resource.class, resourcesExcept(Resource.NONE, Resource.ANY)),
     AUDIT_LOG_OPERATION(Resource.AUDIT_LOG, null, null, AuditLog_.operation, "Operation", SearchFieldTypeEnum.LIST,
             Operation.class),
     AUDIT_LOG_OPERATION_RESULT(Resource.AUDIT_LOG, null, null, AuditLog_.operationResult, "Operation result",
@@ -317,7 +320,7 @@ public enum FilterField {
 
     // Approval
     APPROVAL_RESOURCE(Resource.APPROVAL, null, null, Approval_.resource, "Resource", SearchFieldTypeEnum.LIST,
-            Resource.class),
+            Resource.class, resourcesExcept(Resource.NONE, Resource.ANY)),
     APPROVAL_ACTION(Resource.APPROVAL, null, null, Approval_.action, "Action", SearchFieldTypeEnum.LIST,
             ResourceAction.class),
     APPROVAL_STATUS(Resource.APPROVAL, null, null, Approval_.status, Constants.STATUS, SearchFieldTypeEnum.LIST,
@@ -556,6 +559,11 @@ public enum FilterField {
     /** The values a list field backed by an enum offers: the subset it declares, or every constant otherwise. */
     public IPlatformEnum[] getEnumValues() {
         return enumValues != null ? enumValues : enumClass.getEnumConstants();
+    }
+
+    /** Every resource but the given wildcards, which scope a grant and are never the resource of a stored record. */
+    private static Set<Resource> resourcesExcept(Resource first, Resource... rest) {
+        return EnumSet.complementOf(EnumSet.of(first, rest));
     }
 
     public boolean isNativeArrayField() {
