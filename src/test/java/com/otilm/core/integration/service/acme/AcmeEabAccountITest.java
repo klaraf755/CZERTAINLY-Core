@@ -133,6 +133,26 @@ class AcmeEabAccountITest extends BaseSpringBootTest {
     }
 
     @Test
+    void aKeyWithdrawnWhileTheBindingWasVerifiedDoesNotAdmitTheAccount() throws Exception {
+        // The profile is re-read under a lock at write time, so an edit that lands during verification decides the
+        // outcome rather than the copy the verification was performed against.
+        UUID configured = UUID.randomUUID();
+        configureKeys(configured);
+        byte[] macKey = AcmeEabKeys.decode(AcmeEabKeys.generate());
+        ExternalAccountBinding binding = EabTestUtil.build(configured, NEW_ACCOUNT_PATH, accountKey, macKey);
+
+        // Stand in for the concurrent edit: the verification below cannot succeed anyway (the secret is unreadable),
+        // so what this pins is that the write refuses a key the profile no longer lists.
+        configureKeys(UUID.randomUUID());
+
+        AcmeProblemDocumentException e = Assertions
+                .assertThrows(AcmeProblemDocumentException.class, () -> newAccount(binding));
+
+        Assertions.assertEquals(401, e.getHttpStatusCode());
+        assertNoAccountWasCreated();
+    }
+
+    @Test
     void aProfileWithKeysRefusesAnAccountThatPresentsNoBinding() throws Exception {
         configureKeys(UUID.randomUUID());
 

@@ -31,11 +31,12 @@ public class AcmeEabVerifier {
     private static final Logger logger = LoggerFactory.getLogger(AcmeEabVerifier.class);
 
     /**
-     * The single rejection every failed binding gets. Which of the checks failed — an unknown key identifier, a
-     * mismatched URL or account key, a bad MAC — would tell a caller which key identifiers exist and which of its
-     * guesses came closest.
+     * The single rejection every failed binding gets, shared with the account write so that a binding invalidated by a
+     * concurrent profile edit reads no differently from one that never verified. Which of the checks failed — an
+     * unknown key identifier, a mismatched URL or account key, a bad MAC — would tell a caller which key identifiers
+     * exist and which of its guesses came closest.
      */
-    private static final String REJECTION = "The External Account Binding could not be verified";
+    public static final String REJECTION = "The External Account Binding could not be verified";
 
     private static final String UNAVAILABLE = "The External Account Binding could not be verified at this time";
 

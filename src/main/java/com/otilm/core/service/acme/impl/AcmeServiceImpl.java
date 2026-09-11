@@ -134,7 +134,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @Service
@@ -154,6 +157,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
     private CertificateInternalService certificateService;
     private AcmeChallengeWriter acmeChallengeWriter;
     private AcmeEabVerifier acmeEabVerifier;
+    private PlatformTransactionManager transactionManager;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -169,6 +173,11 @@ public class AcmeServiceImpl implements AcmeExternalService {
     @Autowired
     public void setAcmeEabVerifier(AcmeEabVerifier acmeEabVerifier) {
         this.acmeEabVerifier = acmeEabVerifier;
+    }
+
+    @Autowired
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
     }
 
     @Autowired
@@ -281,8 +290,16 @@ public class AcmeServiceImpl implements AcmeExternalService {
                 .build();
     }
 
+    /**
+     * Runs without an ambient transaction. Admitting an account takes a vault round-trip to read the binding key, and a
+     * transaction opened before it would hold its connection for the whole of that — on an endpoint any client can
+     * reach. Each read below therefore runs in its own short transaction, and the account is written in an explicit one
+     * that re-reads the profile under a lock.
+     */
     @Override
     @ProtocolEndpoint
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public ResponseEntity<Account> newAccount(String acmeProfileName, String requestJson, URI requestUri,
             boolean isRaProfileBased) throws AcmeProblemDocumentException {
         if (requestJson.isEmpty()) {
@@ -1012,7 +1029,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
             return oldAccount;
         }
         // The binding is the account's admission: verified before any row exists, so a rejected one leaves
-        // nothing behind. Its key is read from the vault, which is why the verifier runs outside this transaction.
+        // nothing behind. Reading its key goes to the vault, which is why no transaction is open here.
         UUID eabSecretUuid = acmeProfile.isExternalAccountRequired()
                 ? acmeEabVerifier
                         .verify(acmeProfile, accountRequest.getExternalAccountBinding(), accountKey, requestUri)
@@ -1030,9 +1047,39 @@ public class AcmeServiceImpl implements AcmeExternalService {
         account
                 .setContact(SerializationUtil
                         .serialize(accountRequest.getContact() != null ? accountRequest.getContact() : List.of()));
-        acmeAccountRepository.save(account);
+        insertAccountAgainstTheProfileAsItStands(account, acmeProfile, eabSecretUuid);
         logger.debug("ACME Account created: {}", account);
         return account;
+    }
+
+    /**
+     * Writes the account in its own transaction, having re-read the profile under a row lock. The profile the binding
+     * was verified against was read before the vault round-trip, and an edit in that window could have turned the
+     * requirement on, or withdrawn the very key that verified. Deciding again here, on the locked row, is what keeps
+     * the admission and the profile consistent.
+     */
+    private void insertAccountAgainstTheProfileAsItStands(AcmeAccount account, AcmeProfile acmeProfile,
+            UUID eabSecretUuid) throws AcmeProblemDocumentException {
+        TransactionStatus transaction = transactionManager.getTransaction(new DefaultTransactionDefinition());
+        try {
+            AcmeProfile locked = acmeProfileRepository
+                    .findAndLockByUuid(acmeProfile.getUuid())
+                    .orElseThrow(() -> new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.MALFORMED,
+                            "The ACME Profile no longer exists"));
+            if (locked.isExternalAccountRequired()
+                    && (eabSecretUuid == null || !locked.getEabSecretUuids().contains(eabSecretUuid))) {
+                logger
+                        .info("ACME profile '{}': External Account Binding rejected - the profile changed while the "
+                                + "binding was being verified", locked.getName());
+                throw new AcmeProblemDocumentException(HttpStatus.UNAUTHORIZED, Problem.UNAUTHORIZED,
+                        AcmeEabVerifier.REJECTION);
+            }
+            acmeAccountRepository.save(account);
+            transactionManager.commit(transaction);
+        } catch (RuntimeException | AcmeProblemDocumentException e) {
+            transactionManager.rollback(transaction);
+            throw e;
+        }
     }
 
     private RaProfile getRaProfileEntity(String name) throws NotFoundException {
