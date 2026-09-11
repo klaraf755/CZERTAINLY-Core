@@ -51,9 +51,10 @@ public class AcmeEabVerifier {
      * Resolves the binding to one of the profile's keys and verifies its MAC.
      *
      * <p>
-     * Runs outside the caller's transaction: reading a key goes to the vault over HTTP, and the newAccount transaction
-     * must not be held open for that. The read is authorized as the {@code acme} system user every ACME request runs
-     * as, which the platform grants {@code SECRET:GET_SECRET_CONTENT}.
+     * Runs outside the caller's transaction: reading a key goes to the vault over HTTP, and no caller's transaction
+     * should be held open for that. The secret read still opens one of its own, which is not this class to fix. The
+     * read is authorized as the {@code acme} system user every ACME request runs as, which the platform grants
+     * {@code SECRET:GET_SECRET_CONTENT}.
      *
      * @return the UUID of the secret the binding verified under
      * @throws AcmeProblemDocumentException {@code externalAccountRequired} when no binding was sent,

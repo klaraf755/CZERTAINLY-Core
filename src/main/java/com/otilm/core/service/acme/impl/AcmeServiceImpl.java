@@ -146,6 +146,9 @@ public class AcmeServiceImpl implements AcmeExternalService {
 
     private static final Logger logger = LoggerFactory.getLogger(AcmeServiceImpl.class);
 
+    /** What createAcmeProfile stores when a profile does not name one. */
+    private static final int DEFAULT_RETRY_INTERVAL = 36000;
+
     private AcmeNonceRepository acmeNonceRepository;
     private RaProfileRepository raProfileRepository;
     private AcmeProfileRepository acmeProfileRepository;
@@ -295,6 +298,11 @@ public class AcmeServiceImpl implements AcmeExternalService {
      * transaction opened before it would hold its connection for the whole of that — on an endpoint any client can
      * reach. Each read below therefore runs in its own short transaction, and the account is written in an explicit one
      * that re-reads the profile under a lock.
+     *
+     * <p>
+     * This removes the connection this method would otherwise hold across the vault call. It does not remove the one
+     * the secret read opens for itself: {@code SecretServiceImpl.getSecretContent} is transactional and writes a secret
+     * version after the connector answers, so the call still runs inside a transaction of its own.
      */
     @Override
     @ProtocolEndpoint
@@ -315,6 +323,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
                 .getPayloadAsRequestObject(jwsRequest.getJwsObject(), NewAccountRequest.class);
         logger.debug("New Account request: {}", accountRequest.toString());
 
+        boolean created = false;
         // Check if the Account already exists
         AcmeAccount account = acmeAccountRepository
                 .findByPublicKey(AcmePublicKeyProcessor.publicKeyPemStringFromObject(jwsRequest.getPublicKey()));
@@ -332,11 +341,16 @@ public class AcmeServiceImpl implements AcmeExternalService {
                 account = addNewAccount(acmeProfileName,
                         AcmePublicKeyProcessor.publicKeyPemStringFromObject(jwsRequest.getPublicKey()), accountRequest,
                         isRaProfileBased, jwsRequest.getJwk(), requestUri);
+                created = account.getUuid() != null;
             }
         }
 
-        // Check that the account is not used for different configuration
-        checkAccountConfiguration(account, acmeProfileName, isRaProfileBased);
+        // Only for an account that already existed: one just created was built from these very profiles, so the
+        // check could only fail on a concurrent edit - and it runs after the row is committed, where refusing would
+        // leave an account the client never learns the id of.
+        if (!created) {
+            checkAccountConfiguration(account, acmeProfileName, isRaProfileBased);
+        }
 
         Account accountDto = account.mapToDto();
         String baseUri = getAcmeBaseUri();
@@ -377,7 +391,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
 
         return responseBuilder
                 .header(AcmeConstants.NONCE_HEADER_NAME, generateNonce())
-                .header(AcmeConstants.RETRY_HEADER_NAME, account.getAcmeProfile().getRetryInterval().toString())
+                .header(AcmeConstants.RETRY_HEADER_NAME, retryIntervalHeader(account))
                 .header(AcmeConstants.LINK_HEADER_NAME, generateLinkHeader(acmeProfileName, isRaProfileBased))
                 .body(accountDto);
     }
@@ -1062,23 +1076,56 @@ public class AcmeServiceImpl implements AcmeExternalService {
             UUID eabSecretUuid) throws AcmeProblemDocumentException {
         TransactionStatus transaction = transactionManager.getTransaction(new DefaultTransactionDefinition());
         try {
+            // Detached first: with open-in-view the copy read before the vault call is still managed, and a locked
+            // read would hand back that same instance with its pre-vault state rather than what the row now holds.
+            entityManager.detach(acmeProfile);
             AcmeProfile locked = acmeProfileRepository
                     .findAndLockByUuid(acmeProfile.getUuid())
                     .orElseThrow(() -> new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.MALFORMED,
                             "The ACME Profile no longer exists"));
-            if (locked.isExternalAccountRequired()
-                    && (eabSecretUuid == null || !locked.getEabSecretUuids().contains(eabSecretUuid))) {
-                logger
-                        .info("ACME profile '{}': External Account Binding rejected - the profile changed while the "
-                                + "binding was being verified", locked.getName());
-                throw new AcmeProblemDocumentException(HttpStatus.UNAUTHORIZED, Problem.UNAUTHORIZED,
-                        AcmeEabVerifier.REJECTION);
-            }
+            requireBindingStillAccepted(locked, eabSecretUuid);
             acmeAccountRepository.save(account);
             transactionManager.commit(transaction);
         } catch (RuntimeException | AcmeProblemDocumentException e) {
-            transactionManager.rollback(transaction);
             throw e;
+        } finally {
+            // Not in the catch: a failure inside commit() has already rolled back and completed the transaction,
+            // and rolling back again would replace the real cause with an IllegalTransactionStateException.
+            if (!transaction.isCompleted()) {
+                transactionManager.rollback(transaction);
+            }
+        }
+    }
+
+    /**
+     * The retry hint, defaulted when the profile carries none. An edit that omits the interval stores null, and by this
+     * point the account is committed: throwing here would answer 500 for an account the client cannot find.
+     */
+    private static String retryIntervalHeader(AcmeAccount account) {
+        Integer retryInterval = account.getAcmeProfile().getRetryInterval();
+        return String.valueOf(retryInterval == null ? DEFAULT_RETRY_INTERVAL : retryInterval);
+    }
+
+    /** The profile as the locked row has it, not as it was when the binding was verified. */
+    private void requireBindingStillAccepted(AcmeProfile locked, UUID eabSecretUuid)
+            throws AcmeProblemDocumentException {
+        if (!locked.isExternalAccountRequired()) {
+            return;
+        }
+        if (eabSecretUuid == null) {
+            // The requirement was switched on mid-request. The client sent no binding and is not being turned down
+            // for a bad one, so it gets the answer that tells it to bring one.
+            logger
+                    .info("ACME profile '{}': External Account Binding became required while the account was being "
+                            + "created", locked.getName());
+            throw new AcmeProblemDocumentException(HttpStatus.BAD_REQUEST, Problem.EXTERNAL_ACCOUNT_REQUIRED);
+        }
+        if (!locked.getEabSecretUuids().contains(eabSecretUuid)) {
+            logger
+                    .info("ACME profile '{}': External Account Binding rejected - the key was withdrawn while the "
+                            + "binding was being verified", locked.getName());
+            throw new AcmeProblemDocumentException(HttpStatus.UNAUTHORIZED, Problem.UNAUTHORIZED,
+                    AcmeEabVerifier.REJECTION);
         }
     }
 
