@@ -306,8 +306,7 @@ public class AcmeServiceImpl implements AcmeExternalService {
      */
     @Override
     @ProtocolEndpoint
-    @org.springframework.transaction.annotation.Transactional(
-            propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @org.springframework.transaction.annotation.Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ResponseEntity<Account> newAccount(String acmeProfileName, String requestJson, URI requestUri,
             boolean isRaProfileBased) throws AcmeProblemDocumentException {
         if (requestJson.isEmpty()) {
