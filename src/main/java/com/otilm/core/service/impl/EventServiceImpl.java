@@ -103,20 +103,31 @@ public class EventServiceImpl implements EventExternalService {
         if (commentUuids.isEmpty()) {
             return Map.of();
         }
+        List<Comment> comments = commentRepository.findAllById(commentUuids);
+        // Several comments on the page usually share a host; look each host up once
+        Map<UUID, ResourceObjectDto> hostsByUuid = new HashMap<>();
+        for (Comment comment : comments) {
+            hostsByUuid
+                    .computeIfAbsent(comment.getObjectUuid(),
+                            hostUuid -> hostObjectOf(comment.getResource(), hostUuid));
+        }
         Map<UUID, ResourceObjectDto> hostObjects = new HashMap<>();
-        for (Comment comment : commentRepository.findAllById(commentUuids)) {
-            try {
-                String name = resourceService
-                        .getResourceObjectInternal(comment.getResource(), comment.getObjectUuid())
-                        .getName();
-                hostObjects
-                        .put(comment.getUuid(),
-                                new ResourceObjectDto(comment.getResource(), comment.getObjectUuid(), name));
-            } catch (NotFoundException e) {
-                // host gone since
+        for (Comment comment : comments) {
+            ResourceObjectDto host = hostsByUuid.get(comment.getObjectUuid());
+            if (host != null) {
+                hostObjects.put(comment.getUuid(), host);
             }
         }
         return hostObjects;
+    }
+
+    private ResourceObjectDto hostObjectOf(Resource resource, UUID hostUuid) {
+        try {
+            return new ResourceObjectDto(resource, hostUuid,
+                    resourceService.getResourceObjectInternal(resource, hostUuid).getName());
+        } catch (NotFoundException e) {
+            return null; // host gone since
+        }
     }
 
     private ResourceObjectDto getOriginResourceObjectDto(TriggerHistory triggerHistory) {

@@ -88,7 +88,7 @@ public class EventHistoryMapper {
                 .stream()
                 .map(objectUuid -> EventHistoryMapper
                         .toTriggerHistoryObjectSummaryDto(triggerHistoriesPerObject.getOrDefault(objectUuid, List.of()),
-                                objectUuid, hostObjects.get(objectUuid)))
+                                objectUuid, objectUuid == null ? null : hostObjects.get(objectUuid)))
                 .toList();
 
         dto

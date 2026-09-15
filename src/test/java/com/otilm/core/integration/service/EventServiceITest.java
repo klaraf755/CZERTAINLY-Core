@@ -356,6 +356,22 @@ class EventServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void anIgnoredObjectWithoutUuidStillListsWhenNoCommentIsOnThePage() throws NotFoundException {
+        saveTriggerHistory(ignoreTriggerUuid, null, savedEventHistory, true, true);
+
+        PaginationResponseDto<TriggerHistoryObjectSummaryDto> objectHistories = eventService
+                .getEventHistory(ResourceEvent.CERTIFICATE_DISCOVERED, Resource.CERTIFICATE, certificateUuid,
+                        eventHistoryRequest())
+                .getItems()
+                .getFirst()
+                .getObjectHistories();
+
+        Assertions.assertEquals(1, objectHistories.getTotalItems());
+        Assertions.assertNull(objectHistories.getItems().getFirst().getObjectUuid());
+        Assertions.assertNull(objectHistories.getItems().getFirst().getHostObject());
+    }
+
+    @Test
     void testGetEventHistoryNestedObjectHistories() throws NotFoundException {
         saveTriggerHistory(triggerWithNotificationUuid, UUID.randomUUID(), savedEventHistory, true, true);
         saveTriggerHistory(triggerWithNotificationUuid, UUID.randomUUID(), savedEventHistory, false, false);
