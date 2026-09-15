@@ -85,9 +85,8 @@ public class EventServiceImpl implements EventExternalService {
     }
 
     /**
-     * A comment has no page of its own, so a history row evaluated on one is shown from its host object's page; this
-     * names that host for every comment on the page, in one lookup. A host deleted since is left out rather than named
-     * half-way; its comments go with it, so that is only ever a race.
+     * Names the host object of every comment on the page: a comment has no page of its own, so its history row is shown
+     * from the host's. A host deleted since is left out; its comments cascade with it, so that is only ever a race.
      */
     private Map<UUID, ResourceObjectDto> hostObjectsOfComments(
             Map<UUID, Map<UUID, List<TriggerHistory>>> triggerHistoriesByEventAndObject) {
@@ -126,7 +125,7 @@ public class EventServiceImpl implements EventExternalService {
             return new ResourceObjectDto(resource, hostUuid,
                     resourceService.getResourceObjectInternal(resource, hostUuid).getName());
         } catch (NotFoundException e) {
-            return null; // host gone since
+            return null;
         }
     }
 
