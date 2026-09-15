@@ -10,8 +10,10 @@ import com.otilm.api.model.core.scheduler.PaginationRequestDto;
 import com.otilm.api.model.core.workflows.EventHistoryDto;
 import com.otilm.api.model.core.workflows.EventHistoryRequestDto;
 import com.otilm.api.model.core.workflows.ObjectEventHistoryDto;
+import com.otilm.core.dao.entity.Comment;
 import com.otilm.core.dao.entity.workflows.EventHistory;
 import com.otilm.core.dao.entity.workflows.TriggerHistory;
+import com.otilm.core.dao.repository.CommentRepository;
 import com.otilm.core.dao.repository.workflows.EventHistoryRepository;
 import com.otilm.core.dao.repository.workflows.TriggerHistoryRepository;
 import com.otilm.core.mapper.workflows.EventHistoryMapper;
@@ -23,6 +25,7 @@ import com.otilm.core.service.ResourceInternalService;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +44,12 @@ public class EventServiceImpl implements EventExternalService {
 
     private TriggerHistoryRepository triggerHistoryRepository;
     private EventHistoryRepository eventHistoryRepository;
+    private CommentRepository commentRepository;
+
+    @Autowired
+    public void setCommentRepository(CommentRepository commentRepository) {
+        this.commentRepository = commentRepository;
+    }
 
     @Autowired
     public void setResourceService(ResourceInternalService resourceService) {
@@ -73,6 +82,41 @@ public class EventServiceImpl implements EventExternalService {
             return EventHistoryMapper.toObjectEventHistoryDto(triggerHistory, resourceObjectDto);
         }).toList();
         return PaginationResponseMapper.toDto(triggerHistoryPage, eventHistoryDtos);
+    }
+
+    /**
+     * A comment has no page of its own, so a history row evaluated on one is shown from its host object's page; this
+     * names that host for every comment on the page, in one lookup. A host deleted since is left out rather than named
+     * half-way; its comments go with it, so that is only ever a race.
+     */
+    private Map<UUID, ResourceObjectDto> hostObjectsOfComments(
+            Map<UUID, Map<UUID, List<TriggerHistory>>> triggerHistoriesByEventAndObject) {
+        List<UUID> commentUuids = triggerHistoriesByEventAndObject
+                .values()
+                .stream()
+                .flatMap(perObject -> perObject.values().stream())
+                .flatMap(Collection::stream)
+                .filter(th -> th.getObjectResource() == Resource.COMMENT && th.getObjectUuid() != null)
+                .map(TriggerHistory::getObjectUuid)
+                .distinct()
+                .toList();
+        if (commentUuids.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, ResourceObjectDto> hostObjects = new HashMap<>();
+        for (Comment comment : commentRepository.findAllById(commentUuids)) {
+            try {
+                String name = resourceService
+                        .getResourceObjectInternal(comment.getResource(), comment.getObjectUuid())
+                        .getName();
+                hostObjects
+                        .put(comment.getUuid(),
+                                new ResourceObjectDto(comment.getResource(), comment.getObjectUuid(), name));
+            } catch (NotFoundException e) {
+                // host gone since
+            }
+        }
+        return hostObjects;
     }
 
     private ResourceObjectDto getOriginResourceObjectDto(TriggerHistory triggerHistory) {
@@ -164,6 +208,8 @@ public class EventServiceImpl implements EventExternalService {
             }
         }
 
+        Map<UUID, ResourceObjectDto> hostObjects = hostObjectsOfComments(triggerHistoriesByEventAndObject);
+
         List<EventHistoryDto> eventHistoriesResponse = eventHistories.stream().map(eventHistory -> {
             int[] counts = countsPerEvent.getOrDefault(eventHistory.getUuid(), new int[]{0, 0, 0});
             List<UUID> paginatedObjectUuids = paginatedObjectUuidsPerEvent
@@ -172,7 +218,7 @@ public class EventServiceImpl implements EventExternalService {
                     .getOrDefault(eventHistory.getUuid(), Map.of());
             return EventHistoryMapper
                     .toEventHistoryDto(eventHistory, counts[0], counts[1], counts[2], paginatedObjectUuids,
-                            objectsPageNumber, objectsItemsPerPage, triggerHistoriesPerObject);
+                            objectsPageNumber, objectsItemsPerPage, triggerHistoriesPerObject, hostObjects);
         }).toList();
 
         return PaginationResponseMapper.toDto(eventHistories, eventHistoriesResponse);
