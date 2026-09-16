@@ -356,6 +356,40 @@ class EventServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void aCommentWhoseHostIsGoneListsWithoutOne() throws NotFoundException {
+        Comment comment = new Comment();
+        comment.setResource(Resource.RA_PROFILE);
+        comment.setObjectUuid(UUID.randomUUID());
+        comment.setAuthorUuid(UUID.randomUUID());
+        comment.setAuthorUsername("tst-author");
+        comment.setBody("its profile is gone");
+        UUID commentUuid = commentRepository.saveAndFlush(comment).getUuid();
+        EventHistory commentEvent = new EventHistory();
+        commentEvent.setUuid(UUID.randomUUID());
+        commentEvent.setEvent(ResourceEvent.COMMENT_CREATED);
+        commentEvent.setStartedAt(OffsetDateTime.now().minusMinutes(1));
+        commentEvent.setFinishedAt(OffsetDateTime.now());
+        commentEvent.setStatus(EventStatus.FINISHED);
+        commentEvent = eventHistoryRepository.save(commentEvent);
+        TriggerHistory onComment = triggerInternalService
+                .createTriggerHistory(triggerWithNotificationUuid, null, commentUuid, null, commentEvent,
+                        Resource.COMMENT);
+        onComment.setEvent(ResourceEvent.COMMENT_CREATED);
+        triggerHistoryRepository.save(onComment);
+
+        TriggerHistoryObjectSummaryDto summary = eventService
+                .getEventHistory(ResourceEvent.COMMENT_CREATED, null, null, eventHistoryRequest())
+                .getItems()
+                .getFirst()
+                .getObjectHistories()
+                .getItems()
+                .getFirst();
+
+        Assertions.assertEquals(commentUuid, summary.getObjectUuid());
+        Assertions.assertNull(summary.getHostObject());
+    }
+
+    @Test
     void anIgnoredObjectWithoutUuidStillListsWhenNoCommentIsOnThePage() throws NotFoundException {
         saveTriggerHistory(ignoreTriggerUuid, null, savedEventHistory, true, true);
 
