@@ -29,9 +29,11 @@ import com.otilm.core.dao.entity.CryptographicKey;
 import com.otilm.core.dao.entity.CryptographicKeyItem;
 import com.otilm.core.dao.entity.TokenInstanceReference;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
+import com.otilm.core.dao.repository.TokenInstanceReferenceRepository;
 import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
 import com.otilm.core.model.crypto.KeyOperationScope;
+import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.security.authz.AuthorizationEnforcer;
 import com.otilm.core.security.authz.ExternalAuthorization;
 import com.otilm.core.security.authz.SecuredParentUUID;
@@ -40,11 +42,11 @@ import com.otilm.core.service.CryptographicKeyEventHistoryService;
 import com.otilm.core.service.CryptographicKeyInternalService;
 import com.otilm.core.service.CryptographicOperationExternalService;
 import com.otilm.core.service.CryptographicOperationInternalService;
-import com.otilm.core.service.TokenInstanceInternalService;
 import com.otilm.core.service.handler.key.KeyProviderAdapter;
 import com.otilm.core.service.handler.key.KeyProviderAdapterFactory;
 import com.otilm.core.service.handler.key.KeyProviderV1Adapter;
 import com.otilm.core.service.handler.key.OperationKeyContext;
+import com.otilm.core.service.handler.token.TokenProviderAdapterFactory;
 import com.otilm.core.service.v2.ConnectorInternalService;
 import com.otilm.core.util.CertificateRequestUtils;
 import java.io.IOException;
@@ -86,7 +88,6 @@ public class CryptographicOperationServiceImpl
     // --------------------------------------------------------------------------------
     // Services & API Clients
     // --------------------------------------------------------------------------------
-    private TokenInstanceInternalService tokenInstanceService;
     private CryptographicKeyEventHistoryService eventHistoryService;
     private ConnectorApiFactory connectorApiFactory;
     private ConnectorInternalService connectorService;
@@ -97,8 +98,10 @@ public class CryptographicOperationServiceImpl
     // Repositories
     // --------------------------------------------------------------------------------
     private CryptographicKeyRepository cryptographicKeyRepository;
+    private TokenInstanceReferenceRepository tokenInstanceReferenceRepository;
 
     private KeyProviderAdapterFactory keyProviderAdapterFactory;
+    private TokenProviderAdapterFactory tokenProviderAdapterFactory;
 
     // Setters
 
@@ -108,8 +111,13 @@ public class CryptographicOperationServiceImpl
     }
 
     @Autowired
-    public void setTokenInstanceService(TokenInstanceInternalService tokenInstanceService) {
-        this.tokenInstanceService = tokenInstanceService;
+    public void setTokenProviderAdapterFactory(TokenProviderAdapterFactory tokenProviderAdapterFactory) {
+        this.tokenProviderAdapterFactory = tokenProviderAdapterFactory;
+    }
+
+    @Autowired
+    public void setTokenInstanceReferenceRepository(TokenInstanceReferenceRepository tokenInstanceReferenceRepository) {
+        this.tokenInstanceReferenceRepository = tokenInstanceReferenceRepository;
     }
 
     @Autowired
@@ -380,42 +388,29 @@ public class CryptographicOperationServiceImpl
 
     @Override
     @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.ANY)
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public List<BaseAttribute> listRandomAttributes(SecuredUUID tokenInstanceUuid)
             throws ConnectorException, NotFoundException {
         logger.info("Requesting attributes for random generation for token Instance: {}", tokenInstanceUuid);
-        TokenInstanceReference tokenInstanceReference = tokenInstanceService.getTokenInstanceEntity(tokenInstanceUuid);
-        logger.atDebug().addArgument(tokenInstanceReference::toIdentifierString).log("Token Instance: {}");
-        ApiClientConnectorInfo connectorDto = connectorService
-                .getConnectorForApiClient(tokenInstanceReference.getConnectorUuid());
-        return connectorApiFactory
-                .getCryptographicOperationsApiClient(connectorDto)
-                .listRandomAttributes(connectorDto, tokenInstanceReference.getTokenInstanceUuid());
+        TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
+        return tokenProviderAdapterFactory.forToken(token).listRandomAttributes(token);
     }
 
     @Override
     @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.DETAIL)
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public RandomDataResponseDto randomData(SecuredUUID tokenInstanceUuid, RandomDataRequestDto request)
             throws ConnectorException, NotFoundException {
-        logger.info("Requesting attributes for random generation for token Instance: {}", tokenInstanceUuid);
-        TokenInstanceReference tokenInstanceReference = tokenInstanceService.getTokenInstanceEntity(tokenInstanceUuid);
-        logger.atDebug().addArgument(tokenInstanceReference::toIdentifierString).log("Token Instance: {}");
-        com.otilm.api.model.connector.cryptography.operations.RandomDataRequestDto requestDto = new com.otilm.api.model.connector.cryptography.operations.RandomDataRequestDto();
-        requestDto.setAttributes(request.getAttributes());
-        requestDto.setLength(request.getLength());
-        logger
-                .atDebug()
-                .addArgument(tokenInstanceReference::toIdentifierString)
-                .log("Sending random generation request for token: {}");
-        ApiClientConnectorInfo connectorDto = connectorService
-                .getConnectorForApiClient(tokenInstanceReference.getConnectorUuid());
-        com.otilm.api.model.connector.cryptography.operations.RandomDataResponseDto response = connectorApiFactory
-                .getCryptographicOperationsApiClient(connectorDto)
-                .randomData(connectorDto, tokenInstanceReference.getTokenInstanceUuid(), requestDto);
-        RandomDataResponseDto responseDto = new RandomDataResponseDto();
-        responseDto.setData(byteArrayToBase64Encoded(response.getData()));
-        return responseDto;
+        logger.info("Requesting random data generation for token Instance: {}", tokenInstanceUuid);
+        TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
+        logger.atDebug().addArgument(token::toIdentifierString).log("Sending random generation request for token: {}");
+        return tokenProviderAdapterFactory.forToken(token).randomData(token, request);
+    }
+
+    private TokenInstanceBasicModel getTokenInstanceModel(SecuredUUID uuid) throws NotFoundException {
+        return tokenInstanceReferenceRepository
+                .findBasicModelByUuid(uuid.getValue())
+                .orElseThrow(() -> new NotFoundException(TokenInstanceReference.class, uuid.getValue()));
     }
 
     @Override
@@ -483,6 +478,10 @@ public class CryptographicOperationServiceImpl
             throw new ValidationException(
                     ValidationError.create("Selected item does not contain the complete keypair"));
         }
+        if (privateKeyItem.getKeyMeta() != null) {
+            throw new ValidationException(
+                    ValidationError.create("CSR generation is not available for keys on a cryptography provider v2."));
+        }
         verifyActive(privateKeyItem.getState(), privateKeyItem.isEnabled());
         verifyActive(publicKeyItem.getState(), publicKeyItem.isEnabled());
 
@@ -548,12 +547,5 @@ public class CryptographicOperationServiceImpl
     @Override
     public List<BaseAttribute> listSignatureAttributes(KeyAlgorithm keyAlgorithm) throws ValidationException {
         return KeyProviderV1Adapter.signatureAttributes(keyAlgorithm);
-    }
-
-    private String byteArrayToBase64Encoded(byte[] input) {
-        if (input == null) {
-            return null;
-        }
-        return Base64.getEncoder().encodeToString(input);
     }
 }

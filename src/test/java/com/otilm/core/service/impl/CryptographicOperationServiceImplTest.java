@@ -1,9 +1,12 @@
 package com.otilm.core.service.impl;
 
 import com.otilm.api.exception.ConnectorException;
+import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.api.model.client.cryptography.operations.CipherDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.RandomDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.RandomDataResponseDto;
 import com.otilm.api.model.client.cryptography.operations.SignDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.SignDataResponseDto;
 import com.otilm.api.model.client.cryptography.operations.VerifyDataRequestDto;
@@ -13,15 +16,19 @@ import com.otilm.api.model.common.attribute.v3.MetadataAttributeV3;
 import com.otilm.api.model.common.enums.BitMaskEnum;
 import com.otilm.api.model.common.enums.cryptography.KeyAlgorithm;
 import com.otilm.api.model.common.enums.cryptography.KeyType;
+import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.core.cryptography.key.KeyEvent;
 import com.otilm.api.model.core.cryptography.key.KeyEventStatus;
 import com.otilm.api.model.core.cryptography.key.KeyState;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.core.attribute.RsaEncryptionAttributes;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
+import com.otilm.core.dao.repository.TokenInstanceReferenceRepository;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
+import com.otilm.core.model.crypto.ImmutableTokenInstanceBasicModel;
 import com.otilm.core.model.crypto.KeyOperationScope;
 import com.otilm.core.model.crypto.RemoteKeyReference;
+import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.security.authz.AuthorizationEnforcer;
 import com.otilm.core.security.authz.SecuredParentUUID;
 import com.otilm.core.security.authz.SecuredUUID;
@@ -30,6 +37,8 @@ import com.otilm.core.service.CryptographicKeyInternalService;
 import com.otilm.core.service.handler.key.KeyProviderAdapter;
 import com.otilm.core.service.handler.key.KeyProviderAdapterFactory;
 import com.otilm.core.service.handler.key.OperationKeyContext;
+import com.otilm.core.service.handler.token.TokenProviderAdapter;
+import com.otilm.core.service.handler.token.TokenProviderAdapterFactory;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -68,8 +77,49 @@ class CryptographicOperationServiceImplTest {
     private AuthorizationEnforcer authorizationEnforcer;
     @Mock
     private CryptographicKeyEventHistoryService eventHistoryService;
+    @Mock
+    private TokenProviderAdapterFactory tokenProviderAdapterFactory;
+    @Mock
+    private TokenProviderAdapter tokenAdapter;
+    @Mock
+    private TokenInstanceReferenceRepository tokenInstanceReferenceRepository;
     @InjectMocks
     private CryptographicOperationServiceImpl service;
+
+    @Test
+    void randomData_routesThroughTokenAdapter() throws Exception {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = new ImmutableTokenInstanceBasicModel(tokenUuid, "remote", "token",
+                TokenInstanceStatus.ACTIVATED, "SOFT", UUID.randomUUID(), "connector", UUID.randomUUID(),
+                ConnectorInterface.CRYPTOGRAPHY, "v2", 0);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProviderAdapterFactory.forToken(token)).thenReturn(tokenAdapter);
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(8);
+        RandomDataResponseDto expected = new RandomDataResponseDto();
+        when(tokenAdapter.randomData(token, request)).thenReturn(expected);
+
+        // when
+        RandomDataResponseDto response = service.randomData(SecuredUUID.fromUUID(tokenUuid), request);
+
+        // then
+        assertSame(expected, response);
+    }
+
+    @Test
+    void randomData_throwsNotFound_forUnknownToken() {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.empty());
+
+        // when
+        Executable generate = () -> service.randomData(SecuredUUID.fromUUID(tokenUuid), new RandomDataRequestDto());
+
+        // then
+        assertThrows(NotFoundException.class, generate);
+        verifyNoInteractions(tokenProviderAdapterFactory);
+    }
 
     @Test
     void signData_routesLegacyItemToAdapter_andRecordsSuccess() throws Exception {
