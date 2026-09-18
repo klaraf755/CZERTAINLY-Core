@@ -220,6 +220,13 @@ public class ApplicationConfig {
     }
 
     @Bean
+    public com.otilm.api.clients.cryptography.v2.CryptographicOperationsApiClient cryptographicOperationsApiClientV2(
+            WebClient webClient, TrustManager[] defaultTrustManagers, OperationResponseValidator responseValidator) {
+        return new com.otilm.api.clients.cryptography.v2.CryptographicOperationsApiClient(webClient,
+                defaultTrustManagers, responseValidator);
+    }
+
+    @Bean
     public VaultApiClient vaultApiClient(WebClient webClient, TrustManager[] defaultTrustManagers) {
         return new VaultApiClient(webClient, defaultTrustManagers);
     }

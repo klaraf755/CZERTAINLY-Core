@@ -104,6 +104,7 @@ public class ConnectorApiFactory {
     private final com.otilm.api.clients.v3.AuthorityApiClient restAuthorityApiClientV3;
     private final com.otilm.api.clients.cryptography.v2.TokenApiClient restTokenInstanceApiClientV2;
     private final com.otilm.api.clients.cryptography.v2.KeyApiClient restKeyManagementApiClientV2;
+    private final com.otilm.api.clients.cryptography.v2.CryptographicOperationsApiClient restCryptographicOperationsApiClientV2;
     private final com.otilm.api.clients.discovery.v2.DiscoveryApiClient restDiscoveryApiClientV2;
 
     // MQ clients (optional - Spring injects Optional.empty() if bean is missing)
@@ -132,6 +133,7 @@ public class ConnectorApiFactory {
     private final Optional<com.otilm.api.clients.mq.v3.AuthorityApiClient> mqAuthorityApiClientV3;
     private final Optional<com.otilm.api.clients.mq.v2.TokenApiClient> mqTokenInstanceApiClientV2;
     private final Optional<com.otilm.api.clients.mq.v2.KeyApiClient> mqKeyManagementApiClientV2;
+    private final Optional<com.otilm.api.clients.mq.v2.CryptographicOperationsApiClient> mqCryptographicOperationsApiClientV2;
     private final Optional<com.otilm.api.clients.mq.discovery.v2.DiscoveryApiClient> mqDiscoveryApiClientV2;
 
     // Signing clients
@@ -155,7 +157,7 @@ public class ConnectorApiFactory {
     @PostConstruct
     void logInitialization() {
         log
-                .info("ConnectorApiFactory initialized. MQ clients available: attribute={}, attributesV2={}, authorityInstance={}, certificate={}, certificateV2={}, certificateV3={}, authorityV3={}, compliance={}, complianceV2={}, connector={}, discovery={}, discoveryV2={}, endEntity={}, endEntityProfile={}, entityInstance={}, health={}, healthV2={}, infoV2={}, location={}, metricsV2={}, notificationInstance={}, tokenInstance={}, tokenV2={}, keyManagement={}, keyManagementV2={}, cryptographicOperations={}, signatureFormatting={}, contentSigningFormatting={}, vault={}, secret(REST-only)={}",
+                .info("ConnectorApiFactory initialized. MQ clients available: attribute={}, attributesV2={}, authorityInstance={}, certificate={}, certificateV2={}, certificateV3={}, authorityV3={}, compliance={}, complianceV2={}, connector={}, discovery={}, discoveryV2={}, endEntity={}, endEntityProfile={}, entityInstance={}, health={}, healthV2={}, infoV2={}, location={}, metricsV2={}, notificationInstance={}, tokenInstance={}, tokenV2={}, keyManagement={}, keyManagementV2={}, cryptographicOperations={}, cryptographicOperationsV2={}, signatureFormatting={}, contentSigningFormatting={}, vault={}, secret(REST-only)={}",
                         mqAttributeApiClient.isPresent(), mqAttributesApiClientV2.isPresent(),
                         mqAuthorityInstanceApiClient.isPresent(), mqCertificateApiClient.isPresent(),
                         mqCertificateApiClientV2.isPresent(), mqCertificateApiClientV3.isPresent(),
@@ -168,7 +170,8 @@ public class ConnectorApiFactory {
                         mqMetricsApiClientV2.isPresent(), mqNotificationInstanceApiClient.isPresent(),
                         mqTokenInstanceApiClient.isPresent(), mqTokenInstanceApiClientV2.isPresent(),
                         mqKeyManagementApiClient.isPresent(), mqKeyManagementApiClientV2.isPresent(),
-                        mqCryptographicOperationsApiClient.isPresent(), mqSignatureFormattingApiClient.isPresent(),
+                        mqCryptographicOperationsApiClient.isPresent(),
+                        mqCryptographicOperationsApiClientV2.isPresent(), mqSignatureFormattingApiClient.isPresent(),
                         mqContentSigningFormattingApiClient.isPresent(), mqVaultApiClient.isPresent(), true);
     }
 
@@ -239,6 +242,11 @@ public class ConnectorApiFactory {
 
     public KeySyncApiClient getKeyManagementApiClientV2(ApiClientConnectorInfo connector) {
         return getClient(connector, restKeyManagementApiClientV2, mqKeyManagementApiClientV2);
+    }
+
+    public com.otilm.api.interfaces.client.v2.CryptographicOperationsSyncApiClient getCryptographicOperationsApiClientV2(
+            ApiClientConnectorInfo connector) {
+        return getClient(connector, restCryptographicOperationsApiClientV2, mqCryptographicOperationsApiClientV2);
     }
 
     public CryptographicOperationsSyncApiClient getCryptographicOperationsApiClient(ApiClientConnectorInfo connector) {
