@@ -9,6 +9,7 @@ import com.otilm.core.dao.entity.Connector;
 import com.otilm.core.exception.UnsupportedCryptographyProviderVersionException;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
 import com.otilm.core.model.connector.ImmutableConnectorInterface;
+import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenInstanceFullModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
 import com.otilm.core.service.v2.ConnectorInternalService;
@@ -98,13 +99,32 @@ public class TokenProviderAdapterFactory {
         return forInterface(iface, connector, "token instance " + tokenInstance.uuid());
     }
 
+    /** Selects the adapter bound to an existing token from its cached interface columns. */
+    public TokenProviderAdapter forToken(TokenInstanceBasicModel tokenInstance) throws NotFoundException {
+        Objects.requireNonNull(tokenInstance, "A token instance is required to select a token-provider adapter.");
+        if (tokenInstance.connectorUuid() == null) {
+            throw new NotFoundException(Connector.class, tokenInstance.connectorName());
+        }
+        ImmutableConnectorFullModel connector = connectorInternalService
+                .getConnectorFullModelForApiClient(tokenInstance.connectorUuid());
+        if (tokenInstance.connectorInterfaceUuid() == null) {
+            return new TokenProviderV1Adapter(connectorApiFactory, connector);
+        }
+        return forInterface(tokenInstance.connectorInterfaceCode(), tokenInstance.connectorInterfaceVersion(),
+                connector, "token instance " + tokenInstance.uuid());
+    }
+
     private TokenProviderAdapter forInterface(ImmutableConnectorInterface iface, ImmutableConnectorFullModel connector,
             String owner) {
-        if (iface.code() != ConnectorInterface.CRYPTOGRAPHY) {
+        return forInterface(iface.code(), iface.version(), connector, owner);
+    }
+
+    private TokenProviderAdapter forInterface(ConnectorInterface code, String version,
+            ImmutableConnectorFullModel connector, String owner) {
+        if (code != ConnectorInterface.CRYPTOGRAPHY) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Token provider is associated with a non-cryptography connector interface (" + owner + ")");
         }
-        String version = iface.version();
         if (version == null) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Cryptography connector interface has no version (" + owner + ")");

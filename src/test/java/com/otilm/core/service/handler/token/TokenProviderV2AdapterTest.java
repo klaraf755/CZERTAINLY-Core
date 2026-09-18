@@ -4,6 +4,7 @@ import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.interfaces.client.v2.TokenSyncApiClient;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.attribute.RequestAttributeV2;
+import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.api.model.client.connector.v2.ConnectorVersion;
 import com.otilm.api.model.client.cryptography.key.KeyRequestType;
 import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
@@ -150,6 +151,6 @@ class TokenProviderV2AdapterTest {
 
     private static ImmutableTokenInstanceBasicModel token(UUID connectorUuid) {
         return new ImmutableTokenInstanceBasicModel(UUID.randomUUID(), null, "token", TokenInstanceStatus.UNKNOWN,
-                "SOFT", connectorUuid, "connector", UUID.randomUUID(), 0);
+                "SOFT", connectorUuid, "connector", UUID.randomUUID(), ConnectorInterface.CRYPTOGRAPHY, "v2", 0);
     }
 }
