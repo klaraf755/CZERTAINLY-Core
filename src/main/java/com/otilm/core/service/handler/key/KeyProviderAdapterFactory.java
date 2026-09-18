@@ -5,6 +5,7 @@ import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.core.attribute.engine.AttributeEngine;
 import com.otilm.core.attribute.engine.OutboundSecretContainment;
 import com.otilm.core.client.ConnectorApiFactory;
+import com.otilm.core.client.CryptographyV2ApiClients;
 import com.otilm.core.dao.entity.Connector;
 import com.otilm.core.exception.UnsupportedCryptographyProviderVersionException;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
@@ -25,16 +26,18 @@ public class KeyProviderAdapterFactory {
     private final AttributeEngine attributeEngine;
     private final OperationAttributeResolver operationAttributeResolver;
     private final OutboundSecretContainment outboundSecretContainment;
+    private final CryptographyV2ApiClients cryptographyV2ApiClients;
 
     public KeyProviderAdapterFactory(ConnectorInternalService connectorInternalService,
             ConnectorApiFactory connectorApiFactory, AttributeEngine attributeEngine,
-            OperationAttributeResolver operationAttributeResolver,
-            OutboundSecretContainment outboundSecretContainment) {
+            OperationAttributeResolver operationAttributeResolver, OutboundSecretContainment outboundSecretContainment,
+            CryptographyV2ApiClients cryptographyV2ApiClients) {
         this.connectorInternalService = connectorInternalService;
         this.connectorApiFactory = connectorApiFactory;
         this.attributeEngine = attributeEngine;
         this.operationAttributeResolver = operationAttributeResolver;
         this.outboundSecretContainment = outboundSecretContainment;
+        this.cryptographyV2ApiClients = cryptographyV2ApiClients;
     }
 
     /** A missing interface association identifies a legacy token, even if its connector now advertises v2. */
@@ -86,7 +89,7 @@ public class KeyProviderAdapterFactory {
         }
         if ("v2".equals(version)) {
             return new KeyProviderV2Adapter(connectorApiFactory, connector, attributeEngine, operationAttributeResolver,
-                    outboundSecretContainment);
+                    outboundSecretContainment, cryptographyV2ApiClients.getCryptographicOperationsApiClient(connector));
         }
         throw new UnsupportedCryptographyProviderVersionException(
                 "Unsupported cryptography connector interface version: " + version + " (" + owner + ")");

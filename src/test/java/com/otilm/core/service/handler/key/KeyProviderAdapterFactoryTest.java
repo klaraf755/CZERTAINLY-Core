@@ -11,6 +11,7 @@ import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.core.attribute.engine.AttributeEngine;
 import com.otilm.core.attribute.engine.OutboundSecretContainment;
 import com.otilm.core.client.ConnectorApiFactory;
+import com.otilm.core.client.CryptographyV2ApiClients;
 import com.otilm.core.dao.entity.Connector;
 import com.otilm.core.exception.UnsupportedCryptographyProviderVersionException;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
@@ -55,7 +56,8 @@ class KeyProviderAdapterFactoryTest {
         connectorService = mock(ConnectorInternalService.class);
         clients = mock(ConnectorApiFactory.class);
         factory = new KeyProviderAdapterFactory(connectorService, clients, mock(AttributeEngine.class),
-                mock(OperationAttributeResolver.class), mock(OutboundSecretContainment.class));
+                mock(OperationAttributeResolver.class), mock(OutboundSecretContainment.class),
+                mock(CryptographyV2ApiClients.class));
         connector = new ImmutableConnectorFullModel(UUID.randomUUID(), "provider", ConnectorVersion.V2,
                 "http://connector.test", null, List.of(), null, null, List.of(cryptographyInterface("v2")), List.of());
         when(connectorService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
