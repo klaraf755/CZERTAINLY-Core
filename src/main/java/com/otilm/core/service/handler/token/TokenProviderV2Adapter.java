@@ -3,12 +3,19 @@ package com.otilm.core.service.handler.token;
 import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorException;
+import com.otilm.api.exception.ValidationError;
+import com.otilm.api.exception.ValidationException;
+import com.otilm.api.interfaces.client.v2.CryptographicOperationsSyncApiClient;
 import com.otilm.api.interfaces.client.v2.TokenSyncApiClient;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.cryptography.key.KeyRequestType;
+import com.otilm.api.model.client.cryptography.operations.RandomDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.RandomDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
 import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.connector.cryptography.v2.TokenProfileScopedRequestV2Dto;
+import com.otilm.api.model.connector.cryptography.v2.operations.RandomDataRequestV2Dto;
+import com.otilm.api.model.connector.cryptography.v2.operations.RandomDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.token.TokenScopedRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.token.TokenStatusResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.token.TokenStatusV2;
@@ -21,6 +28,7 @@ import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenProfileBasicModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +42,7 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     private final OperationAttributeResolver operationAttributeResolver;
     private final ApiClientConnectorInfo connectorInfo;
     private final TokenSyncApiClient tokenApiClient;
+    private final CryptographicOperationsSyncApiClient operationsApiClient;
 
     public TokenProviderV2Adapter(ConnectorApiFactory connectorApiFactory, AttributeEngine attributeEngine,
             OperationAttributeResolver operationAttributeResolver, ApiClientConnectorInfo connectorInfo) {
@@ -41,6 +50,7 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         this.operationAttributeResolver = operationAttributeResolver;
         this.connectorInfo = connectorInfo;
         this.tokenApiClient = connectorApiFactory.getTokenInstanceApiClientV2(connectorInfo);
+        this.operationsApiClient = connectorApiFactory.getCryptographicOperationsApiClientV2(connectorInfo);
     }
 
     @Override
@@ -95,18 +105,56 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         return tokenApiClient.listSupportedKeyRequestTypes(connectorInfo, tokenProfileScopedRequest(tokenProfile));
     }
 
-    private TokenScopedRequestV2Dto tokenScopedRequest(TokenInstanceBasicModel tokenInstance)
+    private <T extends TokenScopedRequestV2Dto> T tokenScoped(T request, TokenInstanceBasicModel tokenInstance)
             throws ConnectorException {
         List<RequestAttribute> storedAttributes = attributeEngine
                 .getRequestObjectDataAttributesContent(ObjectAttributeContentInfo
                         .builder(Resource.TOKEN, tokenInstance.uuid())
                         .connector(tokenInstance.connectorUuid())
                         .build());
-        List<RequestAttribute> resolvedAttributes = operationAttributeResolver
-                .resolveForConnectorRequestAsSystem(tokenInstance.connectorUuid(), storedAttributes);
-        TokenScopedRequestV2Dto request = new TokenScopedRequestV2Dto();
-        request.setTokenAttributes(resolvedAttributes);
+        request
+                .setTokenAttributes(operationAttributeResolver
+                        .resolveForConnectorRequestAsSystem(tokenInstance.connectorUuid(), storedAttributes));
         return request;
+    }
+
+    private TokenScopedRequestV2Dto tokenScopedRequest(TokenInstanceBasicModel tokenInstance)
+            throws ConnectorException {
+        return tokenScoped(new TokenScopedRequestV2Dto(), tokenInstance);
+    }
+
+    @Override
+    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException {
+        List<BaseAttribute> response = operationsApiClient
+                .listRandomAttributes(connectorInfo, tokenScopedRequest(tokenInstance));
+        List<BaseAttribute> definitions = requireAttributeList(response, connectorInfo, "random-data attributes");
+        persistAttributeDefinitions(tokenInstance.connectorUuid(), definitions, connectorInfo,
+                "random-data attributes");
+        return definitions;
+    }
+
+    @Override
+    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
+            throws ConnectorException {
+        List<BaseAttribute> definitions = listRandomAttributes(tokenInstance);
+        List<RequestAttribute> attributes = request.getAttributes() == null ? List.of() : request.getAttributes();
+        validateOperationAttributes(tokenInstance.connectorUuid(), definitions, attributes);
+        RandomDataRequestV2Dto body = tokenScoped(new RandomDataRequestV2Dto(), tokenInstance);
+        body.setLength(request.getLength());
+        body.setOperationAttributes(attributes);
+        RandomDataResponseV2Dto connectorResponse = operationsApiClient.randomData(connectorInfo, body);
+        RandomDataResponseDto response = new RandomDataResponseDto();
+        response.setData(Base64.getEncoder().encodeToString(connectorResponse.getData()));
+        return response;
+    }
+
+    private void validateOperationAttributes(UUID connectorUuid, List<BaseAttribute> definitions,
+            List<RequestAttribute> attributes) {
+        try {
+            attributeEngine.validateUpdateDataAttributes(connectorUuid, null, definitions, attributes);
+        } catch (AttributeException e) {
+            throw new ValidationException(ValidationError.create(e.getMessage()));
+        }
     }
 
     private TokenProfileScopedRequestV2Dto tokenProfileScopedRequest(TokenProfileBasicModel tokenProfile)

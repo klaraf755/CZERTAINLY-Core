@@ -4,9 +4,12 @@ import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.interfaces.client.v1.AttributeSyncApiClient;
+import com.otilm.api.interfaces.client.v1.CryptographicOperationsSyncApiClient;
 import com.otilm.api.interfaces.client.v1.TokenInstanceSyncApiClient;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.cryptography.key.KeyRequestType;
+import com.otilm.api.model.client.cryptography.operations.RandomDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.RandomDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
 import com.otilm.api.model.connector.cryptography.token.TokenInstanceDto;
 import com.otilm.api.model.connector.cryptography.token.TokenInstanceRequestDto;
@@ -18,6 +21,7 @@ import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenProfileBasicModel;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 
@@ -33,11 +37,13 @@ public class TokenProviderV1Adapter
     private final ApiClientConnectorInfo connectorInfo;
     private final TokenInstanceSyncApiClient tokenApiClient;
     private final AttributeSyncApiClient attributeApiClient;
+    private final CryptographicOperationsSyncApiClient operationsApiClient;
 
     public TokenProviderV1Adapter(ConnectorApiFactory connectorApiFactory, ApiClientConnectorInfo connectorInfo) {
         this.connectorInfo = connectorInfo;
         this.tokenApiClient = connectorApiFactory.getTokenInstanceApiClient(connectorInfo);
         this.attributeApiClient = connectorApiFactory.getAttributeApiClient(connectorInfo);
+        this.operationsApiClient = connectorApiFactory.getCryptographicOperationsApiClient(connectorInfo);
     }
 
     @Override
@@ -131,6 +137,27 @@ public class TokenProviderV1Adapter
     public void validateTokenAttributes(@Nullable String kind, List<RequestAttribute> attributes)
             throws ValidationException, ConnectorException {
         attributeApiClient.validateAttributes(connectorInfo, FunctionGroupCode.CRYPTOGRAPHY_PROVIDER, attributes, kind);
+    }
+
+    @Override
+    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException {
+        return operationsApiClient.listRandomAttributes(connectorInfo, tokenInstance.tokenInstanceUuid());
+    }
+
+    @Override
+    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
+            throws ConnectorException {
+        var connectorRequest = new com.otilm.api.model.connector.cryptography.operations.RandomDataRequestDto();
+        connectorRequest.setAttributes(request.getAttributes());
+        connectorRequest.setLength(request.getLength());
+        var connectorResponse = operationsApiClient
+                .randomData(connectorInfo, tokenInstance.tokenInstanceUuid(), connectorRequest);
+        RandomDataResponseDto response = new RandomDataResponseDto();
+        response
+                .setData(connectorResponse.getData() == null
+                        ? null
+                        : Base64.getEncoder().encodeToString(connectorResponse.getData()));
+        return response;
     }
 
 }
