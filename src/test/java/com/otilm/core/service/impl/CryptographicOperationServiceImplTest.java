@@ -58,6 +58,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -243,6 +246,30 @@ class CryptographicOperationServiceImplTest {
         verify(eventHistoryService)
                 .addEventHistory(KeyEvent.SIGN, KeyEventStatus.FAILED, "Signing of data failed ",
                         Map.of("exception", "boom"), key.keyItemUuid());
+    }
+
+    @Test
+    void signData_doesNotRecordFailure_whenSuccessHistoryWriteFails() throws Exception {
+        // given
+        CryptographicKeyItemOperationModel key = legacyKey();
+        when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
+        when(keyProviderAdapterFactory.forKeyItem(key)).thenReturn(adapter);
+        when(adapter.signData(any(), any())).thenReturn(new SignDataResponseDto());
+        RuntimeException auditFailure = new RuntimeException("history unavailable");
+        doThrow(auditFailure)
+                .when(eventHistoryService)
+                .addEventHistory(eq(KeyEvent.SIGN), eq(KeyEventStatus.SUCCESS), any(), any(),
+                        eq((UUID) key.keyItemUuid()));
+
+        // when
+        Executable sign = () -> service
+                .signData(SecuredParentUUID.fromUUID(key.tokenInstanceUuid()), SecuredUUID.fromUUID(UUID.randomUUID()),
+                        UUID.randomUUID(), key.keyItemUuid(), signRequest());
+
+        // then
+        assertSame(auditFailure, assertThrows(RuntimeException.class, sign));
+        verify(eventHistoryService, never())
+                .addEventHistory(eq(KeyEvent.SIGN), eq(KeyEventStatus.FAILED), any(), any(), any(UUID.class));
     }
 
     @Test

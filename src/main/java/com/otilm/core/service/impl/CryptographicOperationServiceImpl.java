@@ -365,16 +365,17 @@ public class CryptographicOperationServiceImpl
 
     private <T> T recordEvent(CryptographicKeyItemOperationModel key, KeyEvent event, String successMessage,
             String failureMessage, ConnectorOperation<T> operation) throws ConnectorException, NotFoundException {
+        T result;
         try {
-            T result = operation.execute();
-            eventHistoryService.addEventHistory(event, KeyEventStatus.SUCCESS, successMessage, null, key.keyItemUuid());
-            return result;
+            result = operation.execute();
         } catch (Exception e) {
             eventHistoryService
                     .addEventHistory(event, KeyEventStatus.FAILED, failureMessage,
                             Collections.singletonMap("exception", e.getLocalizedMessage()), key.keyItemUuid());
             throw e;
         }
+        eventHistoryService.addEventHistory(event, KeyEventStatus.SUCCESS, successMessage, null, key.keyItemUuid());
+        return result;
     }
 
     private static void requireActive(CryptographicKeyItemOperationModel key) {
