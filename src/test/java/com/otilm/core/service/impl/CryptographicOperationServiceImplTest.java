@@ -7,6 +7,8 @@ import com.otilm.api.model.client.cryptography.operations.CipherDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.SignDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.SignDataResponseDto;
 import com.otilm.api.model.client.cryptography.operations.VerifyDataRequestDto;
+import com.otilm.api.model.common.attribute.common.BaseAttribute;
+import com.otilm.api.model.common.attribute.v2.DataAttributeV2;
 import com.otilm.api.model.common.attribute.v3.MetadataAttributeV3;
 import com.otilm.api.model.common.enums.BitMaskEnum;
 import com.otilm.api.model.common.enums.cryptography.KeyAlgorithm;
@@ -15,6 +17,7 @@ import com.otilm.api.model.core.cryptography.key.KeyEvent;
 import com.otilm.api.model.core.cryptography.key.KeyEventStatus;
 import com.otilm.api.model.core.cryptography.key.KeyState;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
+import com.otilm.core.attribute.RsaEncryptionAttributes;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
 import com.otilm.core.model.crypto.KeyOperationScope;
@@ -225,6 +228,61 @@ class CryptographicOperationServiceImplTest {
 
         // then
         assertThrows(ValidationException.class, verifyCall);
+        verifyNoInteractions(keyProviderAdapterFactory);
+    }
+
+    @Test
+    void listSignAttributes_delegatesToAdapter() throws Exception {
+        // given
+        CryptographicKeyItemOperationModel key = legacyKey();
+        when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
+        when(keyProviderAdapterFactory.forKeyItem(key)).thenReturn(adapter);
+        List<BaseAttribute> schema = List.of(new DataAttributeV2());
+        when(adapter.listSignAttributes(any())).thenReturn(schema);
+
+        // when
+        List<BaseAttribute> result = service
+                .listSignAttributes(SecuredParentUUID.fromUUID(key.tokenInstanceUuid()),
+                        SecuredUUID.fromUUID(UUID.randomUUID()), UUID.randomUUID(), key.keyItemUuid());
+
+        // then
+        assertSame(schema, result);
+        verifyNoInteractions(eventHistoryService);
+    }
+
+    @Test
+    void listSignatureAttributes_deprecated_rejectsV2Item() throws Exception {
+        // given
+        CryptographicKeyItemOperationModel key = v2Key();
+        when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
+
+        // when
+        Executable list = () -> service
+                .listSignatureAttributes(SecuredParentUUID.fromUUID(UUID.randomUUID()),
+                        SecuredUUID.fromUUID(UUID.randomUUID()), key.keyUuid(), key.keyItemUuid(), KeyAlgorithm.RSA);
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, list);
+        assertTrue(failure.getMessage().contains("per-operation attribute endpoints"));
+        verifyNoInteractions(keyProviderAdapterFactory);
+    }
+
+    @Test
+    void listCipherAttributes_deprecated_stillServesCoreSchema_forLegacyItem() throws Exception {
+        // given
+        CryptographicKeyItemOperationModel key = legacyKey();
+        when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
+
+        // when
+        List<BaseAttribute> result = service
+                .listCipherAttributes(SecuredParentUUID.fromUUID(key.tokenInstanceUuid()),
+                        SecuredUUID.fromUUID(UUID.randomUUID()), key.keyUuid(), key.keyItemUuid(), KeyAlgorithm.RSA);
+
+        // then
+        // DataAttributeV2.equals() delegates to DataAttributeProperties, which has no equals/hashCode override in
+        // the interfaces library, so independently built schemas are never equal by value; toString() carries the
+        // same field data and does compare by value.
+        assertEquals(RsaEncryptionAttributes.getRsaEncryptionAttributes().toString(), result.toString());
         verifyNoInteractions(keyProviderAdapterFactory);
     }
 

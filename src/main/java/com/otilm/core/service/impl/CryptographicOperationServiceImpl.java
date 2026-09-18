@@ -23,13 +23,11 @@ import com.otilm.api.model.core.cryptography.key.KeyEvent;
 import com.otilm.api.model.core.cryptography.key.KeyEventStatus;
 import com.otilm.api.model.core.cryptography.key.KeyState;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
-import com.otilm.core.attribute.RsaEncryptionAttributes;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.config.TokenContentSigner;
 import com.otilm.core.dao.entity.CryptographicKey;
 import com.otilm.core.dao.entity.CryptographicKeyItem;
 import com.otilm.core.dao.entity.TokenInstanceReference;
-import com.otilm.core.dao.repository.CryptographicKeyItemRepository;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
 import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
@@ -99,7 +97,6 @@ public class CryptographicOperationServiceImpl
     // Repositories
     // --------------------------------------------------------------------------------
     private CryptographicKeyRepository cryptographicKeyRepository;
-    private CryptographicKeyItemRepository cryptographicKeyItemRepository;
 
     private KeyProviderAdapterFactory keyProviderAdapterFactory;
 
@@ -141,11 +138,6 @@ public class CryptographicOperationServiceImpl
     }
 
     @Autowired
-    public void setCryptographicKeyItemRepository(CryptographicKeyItemRepository cryptographicKeyItemRepository) {
-        this.cryptographicKeyItemRepository = cryptographicKeyItemRepository;
-    }
-
-    @Autowired
     public void setCryptographicKeyInternalService(CryptographicKeyInternalService cryptographicKeyService) {
         this.cryptographicKeyService = cryptographicKeyService;
     }
@@ -157,14 +149,37 @@ public class CryptographicOperationServiceImpl
     @Override
     @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
             parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public List<BaseAttribute> listCipherAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
             UUID uuid, UUID keyItemUuid, KeyAlgorithm keyAlgorithm) throws ConnectorException, NotFoundException {
         authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
         logger.info("Requesting to list cipher attributes for Key: {} and Algorithm {}", keyItemUuid, keyAlgorithm);
-        CryptographicKeyItem key = getKeyItemEntity(keyItemUuid);
-        logger.atDebug().addArgument(key::toIdentifierString).log("Key: {}");
-        return listEncryptionAttributes(keyAlgorithm);
+        requireLegacyProvider(cryptographicKeyService.getKeyItemModel(keyItemUuid));
+        return KeyProviderV1Adapter.cipherAttributes(keyAlgorithm);
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<BaseAttribute> listEncryptAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
+            UUID uuid, UUID keyItemUuid) throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting to list encryption attributes for Key: {}", keyItemUuid);
+        OperationKeyContext context = loadContext(tokenProfileUuid.getValue(), uuid, keyItemUuid);
+        return adapterFor(context).listEncryptAttributes(context);
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<BaseAttribute> listDecryptAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
+            UUID uuid, UUID keyItemUuid) throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting to list decryption attributes for Key: {}", keyItemUuid);
+        OperationKeyContext context = loadContext(tokenProfileUuid.getValue(), uuid, keyItemUuid);
+        return adapterFor(context).listDecryptAttributes(context);
     }
 
     @Override
@@ -206,7 +221,7 @@ public class CryptographicOperationServiceImpl
     @Override
     @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
             parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public List<BaseAttribute> listSignatureAttributes(SecuredParentUUID tokenInstanceUuid,
             SecuredUUID tokenProfileUuid, UUID uuid, UUID keyItemUuid, KeyAlgorithm keyAlgorithm)
             throws NotFoundException {
@@ -214,9 +229,40 @@ public class CryptographicOperationServiceImpl
         logger
                 .info("Requesting to list the Signature Attributes for key: {} and Algorithm: {}", keyItemUuid,
                         keyAlgorithm);
-        CryptographicKeyItem key = getKeyItemEntity(keyItemUuid);
-        logger.atDebug().addArgument(key::toIdentifierString).log("Key: {}");
-        return listSignatureAttributes(key.getKeyAlgorithm());
+        CryptographicKeyItemOperationModel key = cryptographicKeyService.getKeyItemModel(keyItemUuid);
+        requireLegacyProvider(key);
+        return KeyProviderV1Adapter.signatureAttributes(key.keyAlgorithm());
+    }
+
+    private static void requireLegacyProvider(CryptographicKeyItemOperationModel key) {
+        if (key.hasConnectorInterface()) {
+            throw new ValidationException(ValidationError
+                    .create("Legacy attribute listing is not available for keys on a cryptography provider v2; use the per-operation attribute endpoints."));
+        }
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<BaseAttribute> listSignAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
+            UUID uuid, UUID keyItemUuid) throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting to list signing attributes for Key: {}", keyItemUuid);
+        OperationKeyContext context = loadContext(tokenProfileUuid.getValue(), uuid, keyItemUuid);
+        return adapterFor(context).listSignAttributes(context);
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.CRYPTOGRAPHIC_KEY, action = ResourceAction.ANY,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<BaseAttribute> listVerifyAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
+            UUID uuid, UUID keyItemUuid) throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting to list verification attributes for Key: {}", keyItemUuid);
+        OperationKeyContext context = loadContext(tokenProfileUuid.getValue(), uuid, keyItemUuid);
+        return adapterFor(context).listVerifyAttributes(context);
     }
 
     @Override
@@ -450,15 +496,6 @@ public class CryptographicOperationServiceImpl
         }
     }
 
-    private CryptographicKeyItem getKeyItemEntity(UUID uuid) throws NotFoundException {
-        logger.debug("UUID of the key to get the entity: {}", uuid);
-        CryptographicKeyItem key = cryptographicKeyItemRepository
-                .findByUuid(uuid)
-                .orElseThrow(() -> new NotFoundException(CryptographicKeyItem.class, uuid));
-        logger.atDebug().addArgument(key::toIdentifierString).log("Key Instance: {}");
-        return key;
-    }
-
     private String generateCsr(X500Name subject, Extensions extensions, String key, CryptographicKeyItem privateKeyItem,
             CryptographicKeyItem publicKeyItem, List<RequestAttribute> signatureAttributes, String altKey,
             CryptographicKeyItem altPrivateKeyItem, CryptographicKeyItem altPublicKeyItem,
@@ -511,16 +548,6 @@ public class CryptographicOperationServiceImpl
     @Override
     public List<BaseAttribute> listSignatureAttributes(KeyAlgorithm keyAlgorithm) throws ValidationException {
         return KeyProviderV1Adapter.signatureAttributes(keyAlgorithm);
-    }
-
-    private List<BaseAttribute> listEncryptionAttributes(KeyAlgorithm keyAlgorithm) {
-        switch (keyAlgorithm) {
-            case RSA -> {
-                return RsaEncryptionAttributes.getRsaEncryptionAttributes();
-            }
-            default ->
-                throw new ValidationException(ValidationError.create("Cryptographic key algorithm not supported"));
-        }
     }
 
     private String byteArrayToBase64Encoded(byte[] input) {
