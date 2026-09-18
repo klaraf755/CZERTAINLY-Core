@@ -62,6 +62,7 @@ import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -481,7 +482,64 @@ class KeyProviderV1AdapterTest {
     }
 
     @Test
-    void listSignAttributes_returnsCoreSchema_byAlgorithm() throws Exception {
+    void encryptData_leavesDataNull_whenConnectorOmitsIt() throws Exception {
+        // given
+        OperationKeyContext context = OperationKeyContext
+                .legacy(keyItem(KeyAlgorithm.RSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()),
+                        UUID.randomUUID()));
+        CipherDataRequestDto request = new CipherDataRequestDto();
+        request.setCipherAttributes(List.of());
+        request.setCipherData(List.of());
+        when(operationsClient.encryptData(any(), any(), any(), any()))
+                .thenReturn(LegacyOperationFixtures.encryptResponseWithoutData());
+
+        // when
+        EncryptDataResponseDto response = adapter.encryptData(context, request);
+
+        // then
+        assertNull(response.getEncryptedData());
+    }
+
+    @Test
+    void signData_leavesSignaturesNull_whenConnectorOmitsThem() throws Exception {
+        // given
+        OperationKeyContext context = OperationKeyContext
+                .legacy(keyItem(KeyAlgorithm.MLDSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()),
+                        UUID.randomUUID()));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of());
+        when(operationsClient.signData(any(), any(), any(), any()))
+                .thenReturn(LegacyOperationFixtures.signResponseWithoutSignatures());
+
+        // when
+        SignDataResponseDto response = adapter.signData(context, request);
+
+        // then
+        assertNull(response.getSignatures());
+    }
+
+    @Test
+    void verifyData_leavesVerificationsNull_whenConnectorOmitsThem() throws Exception {
+        // given
+        OperationKeyContext context = OperationKeyContext
+                .legacy(keyItem(KeyAlgorithm.MLDSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()),
+                        UUID.randomUUID()));
+        VerifyDataRequestDto request = new VerifyDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setSignatures(List.of());
+        when(operationsClient.verifyData(any(), any(), any(), any()))
+                .thenReturn(LegacyOperationFixtures.verifyResponseWithoutVerifications());
+
+        // when
+        VerifyDataResponseDto response = adapter.verifyData(context, request);
+
+        // then
+        assertNull(response.getVerifications());
+    }
+
+    @Test
+    void listSignAttributes_returnsCoreSchema_byAlgorithm() {
         // given
         OperationKeyContext rsa = OperationKeyContext
                 .legacy(keyItem(KeyAlgorithm.RSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()),

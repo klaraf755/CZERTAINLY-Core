@@ -55,6 +55,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationValidationCapability {
 
+    private static final String UNSUPPORTED_KEY_ALGORITHM = "Cryptographic key algorithm not supported";
+
     private final ApiClientConnectorInfo connectorInfo;
     private final KeyManagementSyncApiClient keyManagementSyncApiClient;
     private final CryptographicOperationsSyncApiClient operationsApiClient;
@@ -188,7 +190,9 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
         var response = operationsApiClient
                 .encryptData(connectorInfo, remoteTokenUuid(key), requireV1KeyReference(key), connectorRequest);
         EncryptDataResponseDto result = new EncryptDataResponseDto();
-        result.setEncryptedData(toCipherResponse(LegacyOperationCodec.cipherResults(response.getEncryptedData())));
+        if (response.getEncryptedData() != null) {
+            result.setEncryptedData(toCipherResponse(LegacyOperationCodec.cipherResults(response.getEncryptedData())));
+        }
         return result;
     }
 
@@ -201,7 +205,9 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
         var response = operationsApiClient
                 .decryptData(connectorInfo, remoteTokenUuid(key), requireV1KeyReference(key), connectorRequest);
         DecryptDataResponseDto result = new DecryptDataResponseDto();
-        result.setDecryptedData(toCipherResponse(LegacyOperationCodec.cipherResults(response.getDecryptedData())));
+        if (response.getDecryptedData() != null) {
+            result.setDecryptedData(toCipherResponse(LegacyOperationCodec.cipherResults(response.getDecryptedData())));
+        }
         return result;
     }
 
@@ -215,8 +221,8 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
         var response = operationsApiClient
                 .signData(connectorInfo, remoteTokenUuid(key), requireV1KeyReference(key), connectorRequest);
         SignDataResponseDto result = new SignDataResponseDto();
-        List<OperationResultItem> signatures = LegacyOperationCodec.signatureResults(response.getSignatures());
-        if (signatures != null) {
+        if (response.getSignatures() != null) {
+            List<OperationResultItem> signatures = LegacyOperationCodec.signatureResults(response.getSignatures());
             result.setSignatures(signatures.stream().map(item -> {
                 SignatureResponseData data = new SignatureResponseData();
                 data.setData(item.data());
@@ -239,8 +245,9 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
         var response = operationsApiClient
                 .verifyData(connectorInfo, remoteTokenUuid(key), requireV1KeyReference(key), connectorRequest);
         VerifyDataResponseDto result = new VerifyDataResponseDto();
-        List<OperationResultItem> verifications = LegacyOperationCodec.verificationResults(response.getVerifications());
-        if (verifications != null) {
+        if (response.getVerifications() != null) {
+            List<OperationResultItem> verifications = LegacyOperationCodec
+                    .verificationResults(response.getVerifications());
             result.setVerifications(verifications.stream().map(item -> {
                 VerificationResponseData data = new VerificationResponseData();
                 data.setResult(Boolean.TRUE.equals(item.result()));
@@ -277,7 +284,7 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
         if (keyAlgorithm == KeyAlgorithm.RSA) {
             return RsaEncryptionAttributes.getRsaEncryptionAttributes();
         }
-        throw new ValidationException(ValidationError.create("Cryptographic key algorithm not supported"));
+        throw new ValidationException(ValidationError.create(UNSUPPORTED_KEY_ALGORITHM));
     }
 
     /** Core-internal signature schema served for legacy providers, which publish none of their own. */
@@ -286,8 +293,7 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
             case RSA -> RsaSignatureAttributes.getRsaSignatureAttributes();
             case ECDSA -> EcdsaSignatureAttributes.getEcdsaSignatureAttributes();
             case FALCON, MLDSA, SLHDSA -> List.of();
-            default ->
-                throw new ValidationException(ValidationError.create("Cryptographic key algorithm not supported"));
+            default -> throw new ValidationException(ValidationError.create(UNSUPPORTED_KEY_ALGORITHM));
         };
     }
 
@@ -303,8 +309,7 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
             case FALCON, MLDSA, SLHDSA -> {
                 // key-intrinsic algorithms carry no request attributes
             }
-            default ->
-                throw new ValidationException(ValidationError.create("Cryptographic key algorithm not supported"));
+            default -> throw new ValidationException(ValidationError.create(UNSUPPORTED_KEY_ALGORITHM));
         }
     }
 
@@ -332,9 +337,6 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
     }
 
     private static List<CipherResponseData> toCipherResponse(List<OperationResultItem> items) {
-        if (items == null) {
-            return null;
-        }
         return items.stream().map(item -> {
             CipherResponseData data = new CipherResponseData();
             data.setData(item.data());

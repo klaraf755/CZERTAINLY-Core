@@ -59,9 +59,6 @@ public final class LegacyOperationCodec {
     }
 
     public static List<OperationResultItem> cipherResults(List<CipherResponseData> items) {
-        if (items == null) {
-            return null;
-        }
         return items
                 .stream()
                 .map(item -> new OperationResultItem(encode(item.getData()), null, item.getIdentifier(),
@@ -70,9 +67,6 @@ public final class LegacyOperationCodec {
     }
 
     public static List<OperationResultItem> signatureResults(List<SignatureResponseData> items) {
-        if (items == null) {
-            return null;
-        }
         return items
                 .stream()
                 .map(item -> new OperationResultItem(encode(item.getData()), null, item.getIdentifier(),
@@ -81,9 +75,6 @@ public final class LegacyOperationCodec {
     }
 
     public static List<OperationResultItem> verificationResults(List<VerificationResponseData> items) {
-        if (items == null) {
-            return null;
-        }
         return items
                 .stream()
                 .map(item -> new OperationResultItem(null, item.isResult(), item.getIdentifier(), item.getDetails()))

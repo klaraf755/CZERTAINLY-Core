@@ -42,6 +42,18 @@ public final class LegacyOperationFixtures {
         return response;
     }
 
+    public static EncryptDataResponseDto encryptResponseWithoutData() {
+        return new EncryptDataResponseDto();
+    }
+
+    public static SignDataResponseDto signResponseWithoutSignatures() {
+        return new SignDataResponseDto();
+    }
+
+    public static VerifyDataResponseDto verifyResponseWithoutVerifications() {
+        return new VerifyDataResponseDto();
+    }
+
     public static VerifyDataResponseDto verifyResponse(boolean result, String identifier) {
         VerificationResponseData data = new VerificationResponseData();
         data.setResult(result);

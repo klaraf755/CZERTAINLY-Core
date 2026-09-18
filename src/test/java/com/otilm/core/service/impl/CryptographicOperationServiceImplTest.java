@@ -154,7 +154,7 @@ class CryptographicOperationServiceImplTest {
     void signData_loadsProfileScope_forV2Item_andChecksPathAssociation() throws Exception {
         // given
         CryptographicKeyItemOperationModel key = v2Key();
-        KeyOperationScope scope = scopeFor(key);
+        KeyOperationScope scope = scope();
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
         when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
         when(keyProviderAdapterFactory.forKeyItem(key)).thenReturn(adapter);
@@ -176,7 +176,7 @@ class CryptographicOperationServiceImplTest {
     void signData_rejectsV2Item_whenPathProfileDiffers() throws Exception {
         // given
         CryptographicKeyItemOperationModel key = v2Key();
-        KeyOperationScope scope = scopeFor(key);
+        KeyOperationScope scope = scope();
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
         when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
 
@@ -194,7 +194,7 @@ class CryptographicOperationServiceImplTest {
     void signData_rejectsV2Item_whenPathKeyDiffers() throws Exception {
         // given
         CryptographicKeyItemOperationModel key = v2Key();
-        KeyOperationScope scope = scopeFor(key);
+        KeyOperationScope scope = scope();
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
         when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
 
@@ -213,7 +213,7 @@ class CryptographicOperationServiceImplTest {
     void signData_rejectsV2Item_whenPathTokenDiffers() throws Exception {
         // given
         CryptographicKeyItemOperationModel key = v2Key();
-        KeyOperationScope scope = scopeFor(key);
+        KeyOperationScope scope = scope();
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
         when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
 
@@ -407,7 +407,7 @@ class CryptographicOperationServiceImplTest {
                 key.tokenInstanceUuid(), key.keyUuid(), key.connectorInterfaceCode(), key.connectorInterfaceVersion());
     }
 
-    private static KeyOperationScope scopeFor(CryptographicKeyItemOperationModel key) {
+    private static KeyOperationScope scope() {
         return new KeyOperationScope(UUID.randomUUID(), "profile", null, "token", UUID.randomUUID(), true,
                 BitMaskEnum.convertSetToBitMask(EnumSet.of(KeyUsage.SIGN)));
     }

@@ -68,12 +68,4 @@ class LegacyOperationCodecTest {
         assertEquals("c", results.get(0).identifier());
         assertEquals("detail", results.get(0).details());
     }
-
-    @Test
-    void results_returnNull_forNullConnectorList() {
-        // when / then
-        assertNull(LegacyOperationCodec.cipherResults(null));
-        assertNull(LegacyOperationCodec.signatureResults(null));
-        assertNull(LegacyOperationCodec.verificationResults(null));
-    }
 }

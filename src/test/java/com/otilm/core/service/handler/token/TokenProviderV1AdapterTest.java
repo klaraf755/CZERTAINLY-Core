@@ -72,9 +72,10 @@ class TokenProviderV1AdapterTest {
         ConnectorApiFactory connectorApiFactory = mock(ConnectorApiFactory.class);
         ApiClientConnectorInfo connectorInfo = mock(ApiClientConnectorInfo.class);
         CryptographicOperationsSyncApiClient operationsClient = mock(CryptographicOperationsSyncApiClient.class);
-        when(connectorApiFactory.getTokenInstanceApiClient(connectorInfo))
-                .thenReturn(mock(TokenInstanceSyncApiClient.class));
-        when(connectorApiFactory.getAttributeApiClient(connectorInfo)).thenReturn(mock(AttributeSyncApiClient.class));
+        TokenInstanceSyncApiClient tokenApiClient = mock(TokenInstanceSyncApiClient.class);
+        AttributeSyncApiClient attributeApiClient = mock(AttributeSyncApiClient.class);
+        when(connectorApiFactory.getTokenInstanceApiClient(connectorInfo)).thenReturn(tokenApiClient);
+        when(connectorApiFactory.getAttributeApiClient(connectorInfo)).thenReturn(attributeApiClient);
         when(connectorApiFactory.getCryptographicOperationsApiClient(connectorInfo)).thenReturn(operationsClient);
         TokenInstanceBasicModel token = mock(TokenInstanceBasicModel.class);
         when(token.tokenInstanceUuid()).thenReturn("remote-token");
