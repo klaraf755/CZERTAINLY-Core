@@ -9,6 +9,7 @@ import com.otilm.core.dao.entity.Connector;
 import com.otilm.core.exception.UnsupportedCryptographyProviderVersionException;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
 import com.otilm.core.model.connector.ImmutableConnectorInterface;
+import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
 import com.otilm.core.model.crypto.TokenInstanceFullModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
 import com.otilm.core.service.v2.ConnectorInternalService;
@@ -53,13 +54,32 @@ public class KeyProviderAdapterFactory {
         return forInterface(iface, connector, "token instance " + tokenInstance.toIdentifierString());
     }
 
+    /** Selects the adapter for a key item from the interface columns cached on its operation model. */
+    public KeyProviderAdapter forKeyItem(CryptographicKeyItemOperationModel keyItem) throws NotFoundException {
+        Objects.requireNonNull(keyItem, "A key item is required to select a key-provider adapter.");
+        if (keyItem.connectorUuid() == null) {
+            throw new NotFoundException(Connector.class, keyItem.keyItemUuid());
+        }
+        ImmutableConnectorFullModel connector = connectorInternalService
+                .getConnectorFullModelForApiClient(keyItem.connectorUuid());
+        if (!keyItem.hasConnectorInterface()) {
+            return new KeyProviderV1Adapter(connectorApiFactory, connector, attributeEngine);
+        }
+        return forInterface(keyItem.connectorInterfaceCode(), keyItem.connectorInterfaceVersion(), connector,
+                "key item " + keyItem.toIdentifierString());
+    }
+
     private KeyProviderAdapter forInterface(ImmutableConnectorInterface iface, ImmutableConnectorFullModel connector,
             String owner) {
-        if (iface.code() != ConnectorInterface.CRYPTOGRAPHY) {
+        return forInterface(iface.code(), iface.version(), connector, owner);
+    }
+
+    private KeyProviderAdapter forInterface(ConnectorInterface code, String version,
+            ImmutableConnectorFullModel connector, String owner) {
+        if (code != ConnectorInterface.CRYPTOGRAPHY) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Key provider is associated with a non-cryptography connector interface (" + owner + ")");
         }
-        String version = iface.version();
         if (version == null) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Cryptography connector interface has no version (" + owner + ")");
