@@ -115,7 +115,7 @@ public class TokenProviderAdapterFactory {
         }
         ImmutableConnectorFullModel connector = connectorInternalService
                 .getConnectorFullModelForApiClient(tokenInstance.connectorUuid());
-        if (tokenInstance.connectorInterfaceUuid() == null) {
+        if (tokenInstance.connectorInterfaceCode() == null) {
             return new TokenProviderV1Adapter(connectorApiFactory, connector);
         }
         return forInterface(tokenInstance.connectorInterfaceCode(), tokenInstance.connectorInterfaceVersion(),

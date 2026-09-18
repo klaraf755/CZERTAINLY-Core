@@ -192,6 +192,21 @@ class TokenProviderAdapterFactoryTest {
     }
 
     @Test
+    void forToken_basicModel_returnsV1Adapter_forInterfaceUuidWithoutCode() throws Exception {
+        // given
+        ImmutableConnectorFullModel connector = connector(List.of(cryptographyInterface("v2")), List.of());
+        when(connectorInternalService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        TokenInstanceBasicModel token = new ImmutableTokenInstanceBasicModel(UUID.randomUUID(), null, "token",
+                TokenInstanceStatus.UNKNOWN, "SOFT", connector.uuid(), "connector", UUID.randomUUID(), null, null, 0);
+
+        // when
+        TokenProviderAdapter adapter = factory.forToken(token);
+
+        // then
+        assertInstanceOf(TokenProviderV1Adapter.class, adapter);
+    }
+
+    @Test
     void forToken_basicModel_returnsV2Adapter_forCryptographyV2() throws Exception {
         // given
         ImmutableConnectorFullModel connector = connector(List.of(cryptographyInterface("v2")), List.of());

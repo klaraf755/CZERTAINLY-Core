@@ -1,7 +1,6 @@
 package com.otilm.core.service.handler.key;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorEntityNotFoundException;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.ValidationException;
@@ -23,7 +22,9 @@ import com.otilm.api.model.client.cryptography.operations.VerifyDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.VerifyDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
 import com.otilm.api.model.common.attribute.common.MetadataAttribute;
+import com.otilm.api.model.common.attribute.common.content.AttributeContentType;
 import com.otilm.api.model.common.attribute.common.content.data.SecretAttributeContentData;
+import com.otilm.api.model.common.attribute.common.properties.DataAttributeProperties;
 import com.otilm.api.model.common.attribute.v2.DataAttributeV2;
 import com.otilm.api.model.common.attribute.v2.MetadataAttributeV2;
 import com.otilm.api.model.common.attribute.v2.content.SecretAttributeContentV2;
@@ -85,6 +86,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.ResponseEntity;
 
@@ -98,11 +100,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Named.named;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class KeyProviderV2AdapterTest {
@@ -304,13 +306,13 @@ class KeyProviderV2AdapterTest {
                 resolvedToken);
         stubAttributes(Resource.TOKEN_PROFILE, profile.uuid(), List.of(requestAttribute("stored-profile")),
                 resolvedProfile);
-        List<BaseAttribute> schema = List.of(new DataAttributeV2());
-        when(operationsClient.listSignAttributes(any(), any())).thenReturn(schema);
+        when(operationsClient.listSignAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("digest", true)));
         SignDataResponseV2Dto body = new SignDataResponseV2Dto();
         body.setSignatures(List.of(new SignatureDataV2Dto(new byte[]{7}, "0")));
         when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
         SignDataRequestDto request = new SignDataRequestDto();
-        request.setSignatureAttributes(List.of(requestAttribute("digest")));
+        request.setSignatureAttributes(List.of(stringAttribute("digest", "SHA256")));
         SignatureRequestData item = new SignatureRequestData();
         item.setData(Base64.getEncoder().encodeToString(new byte[]{1}));
         request.setData(List.of(item));
@@ -319,8 +321,6 @@ class KeyProviderV2AdapterTest {
         SignDataResponseDto response = adapter.signData(v2Context(keyMeta), request);
 
         // then
-        verify(attributes)
-                .validateUpdateDataAttributes(profile.connectorUuid(), null, schema, request.getSignatureAttributes());
         ArgumentCaptor<SignDataRequestV2Dto> sent = ArgumentCaptor.forClass(SignDataRequestV2Dto.class);
         verify(operationsClient).signData(any(), sent.capture());
         assertSame(keyMeta, sent.getValue().getKeyMeta());
@@ -371,10 +371,8 @@ class KeyProviderV2AdapterTest {
     @Test
     void signData_rejectsInvalidAttributes_beforeCallingConnector() throws Exception {
         // given
-        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of(new DataAttributeV2()));
-        doThrow(new AttributeException("digest is required"))
-                .when(attributes)
-                .validateUpdateDataAttributes(any(), any(), any(), any());
+        when(operationsClient.listSignAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("digest", true)));
         SignDataRequestDto request = new SignDataRequestDto();
         request.setSignatureAttributes(List.of());
         SignatureRequestData item = new SignatureRequestData();
@@ -508,9 +506,10 @@ class KeyProviderV2AdapterTest {
     }
 
     @Test
-    void signData_resolvesScopeOnce_andLeavesTheSchemaUnpersisted() throws Exception {
+    void signData_resolvesScopeOnce_andNeverTouchesTheAttributeEngineForTheSchema() throws Exception {
         // given
-        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of(new DataAttributeV2()));
+        when(operationsClient.listSignAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("digest", false)));
         SignDataResponseV2Dto body = new SignDataResponseV2Dto();
         body.setSignatures(List.of(new SignatureDataV2Dto(new byte[]{7}, "0")));
         when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
@@ -528,6 +527,28 @@ class KeyProviderV2AdapterTest {
         verify(attributes)
                 .getRequestObjectDataAttributesContent(attributeScope(Resource.TOKEN_PROFILE, profile.uuid()));
         verify(attributes, never()).updateDataAttributeDefinitions(any(), any(), any());
+        verify(attributes, never()).validateUpdateDataAttributes(any(), any(), any(), any());
+        verifyNoMoreInteractions(attributes);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"not-a-position", "1", "-1"})
+    void signData_rejectsIdentifierThatWasNotPartOfTheRequest(String returnedIdentifier) throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataResponseV2Dto body = new SignDataResponseV2Dto();
+        body.setSignatures(List.of(new SignatureDataV2Dto(new byte[]{7}, returnedIdentifier)));
+        when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", "caller")));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        ConnectorException failure = assertThrows(ConnectorException.class, sign);
+        assertEquals("Connector returned an identifier that was not part of the request.", failure.getMessage());
     }
 
     @Test
@@ -586,6 +607,25 @@ class KeyProviderV2AdapterTest {
         // then
         assertSame(schema, result);
         verify(attributes).updateDataAttributeDefinitions(profile.connectorUuid(), null, schema);
+    }
+
+    private static DataAttributeV2 dataAttributeDefinition(String name, boolean required) {
+        DataAttributeProperties properties = new DataAttributeProperties();
+        properties.setLabel(name);
+        properties.setRequired(required);
+        DataAttributeV2 definition = new DataAttributeV2();
+        definition.setUuid(UUID.randomUUID().toString());
+        definition.setName(name);
+        definition.setContentType(AttributeContentType.STRING);
+        definition.setProperties(properties);
+        return definition;
+    }
+
+    private static RequestAttribute stringAttribute(String name, String value) {
+        RequestAttributeV2 attribute = new RequestAttributeV2();
+        attribute.setName(name);
+        attribute.setContent(List.of(new StringAttributeContentV2(value)));
+        return attribute;
     }
 
     private static RequestAttribute requestAttribute(String name) {

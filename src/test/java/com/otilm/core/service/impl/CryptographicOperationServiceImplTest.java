@@ -159,8 +159,9 @@ class CryptographicOperationServiceImplTest {
 
         // when
         service
-                .signData(SecuredParentUUID.fromUUID(UUID.randomUUID()), SecuredUUID.fromUUID(scope.tokenProfileUuid()),
-                        key.keyUuid(), key.keyItemUuid(), signRequest());
+                .signData(SecuredParentUUID.fromUUID(scope.tokenInstanceReferenceUuid()),
+                        SecuredUUID.fromUUID(scope.tokenProfileUuid()), key.keyUuid(), key.keyItemUuid(),
+                        signRequest());
 
         // then
         ArgumentCaptor<OperationKeyContext> context = ArgumentCaptor.forClass(OperationKeyContext.class);
@@ -172,13 +173,14 @@ class CryptographicOperationServiceImplTest {
     void signData_rejectsV2Item_whenPathProfileDiffers() throws Exception {
         // given
         CryptographicKeyItemOperationModel key = v2Key();
+        KeyOperationScope scope = scopeFor(key);
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
-        when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scopeFor(key)));
+        when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
 
         // when
         Executable sign = () -> service
-                .signData(SecuredParentUUID.fromUUID(UUID.randomUUID()), SecuredUUID.fromUUID(UUID.randomUUID()),
-                        key.keyUuid(), key.keyItemUuid(), signRequest());
+                .signData(SecuredParentUUID.fromUUID(scope.tokenInstanceReferenceUuid()),
+                        SecuredUUID.fromUUID(UUID.randomUUID()), key.keyUuid(), key.keyItemUuid(), signRequest());
 
         // then
         assertThrows(ValidationException.class, sign);
@@ -195,8 +197,27 @@ class CryptographicOperationServiceImplTest {
 
         // when
         Executable sign = () -> service
+                .signData(SecuredParentUUID.fromUUID(scope.tokenInstanceReferenceUuid()),
+                        SecuredUUID.fromUUID(scope.tokenProfileUuid()), UUID.randomUUID(), key.keyItemUuid(),
+                        signRequest());
+
+        // then
+        assertThrows(ValidationException.class, sign);
+        verifyNoInteractions(keyProviderAdapterFactory, adapter);
+    }
+
+    @Test
+    void signData_rejectsV2Item_whenPathTokenDiffers() throws Exception {
+        // given
+        CryptographicKeyItemOperationModel key = v2Key();
+        KeyOperationScope scope = scopeFor(key);
+        when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
+        when(cryptographicKeyRepository.findOperationScopeByUuid(key.keyUuid())).thenReturn(Optional.of(scope));
+
+        // when
+        Executable sign = () -> service
                 .signData(SecuredParentUUID.fromUUID(UUID.randomUUID()), SecuredUUID.fromUUID(scope.tokenProfileUuid()),
-                        UUID.randomUUID(), key.keyItemUuid(), signRequest());
+                        key.keyUuid(), key.keyItemUuid(), signRequest());
 
         // then
         assertThrows(ValidationException.class, sign);
@@ -360,8 +381,8 @@ class CryptographicOperationServiceImplTest {
     }
 
     private static KeyOperationScope scopeFor(CryptographicKeyItemOperationModel key) {
-        return new KeyOperationScope(key.keyUuid(), UUID.randomUUID(), "profile", null, "token", UUID.randomUUID(),
-                true, BitMaskEnum.convertSetToBitMask(EnumSet.of(KeyUsage.SIGN)), null, key.connectorUuid());
+        return new KeyOperationScope(UUID.randomUUID(), "profile", null, "token", UUID.randomUUID(), true,
+                BitMaskEnum.convertSetToBitMask(EnumSet.of(KeyUsage.SIGN)));
     }
 
     private static SignDataRequestDto signRequest() {

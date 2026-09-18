@@ -1,7 +1,6 @@
 package com.otilm.core.service.handler.token;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.interfaces.client.v2.CryptographicOperationsSyncApiClient;
@@ -14,7 +13,9 @@ import com.otilm.api.model.client.cryptography.key.KeyRequestType;
 import com.otilm.api.model.client.cryptography.operations.RandomDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.RandomDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
+import com.otilm.api.model.common.attribute.common.content.AttributeContentType;
 import com.otilm.api.model.common.attribute.common.content.data.SecretAttributeContentData;
+import com.otilm.api.model.common.attribute.common.properties.DataAttributeProperties;
 import com.otilm.api.model.common.attribute.v2.DataAttributeV2;
 import com.otilm.api.model.common.attribute.v2.content.SecretAttributeContentV2;
 import com.otilm.api.model.common.attribute.v2.content.StringAttributeContentV2;
@@ -49,11 +50,11 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class TokenProviderV2AdapterTest {
@@ -165,21 +166,19 @@ class TokenProviderV2AdapterTest {
     @Test
     void randomData_validatesAttributesAgainstSchema_thenForwardsLengthAndEncodesData() throws Exception {
         // given
-        List<BaseAttribute> definitions = List.of(new DataAttributeV2());
-        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitions);
+        when(operationsClient.listRandomAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("length-hint", true)));
         RandomDataResponseV2Dto connectorResponse = new RandomDataResponseV2Dto();
         connectorResponse.setData(new byte[]{9, 8});
         when(operationsClient.randomData(any(), any())).thenReturn(connectorResponse);
         RandomDataRequestDto request = new RandomDataRequestDto();
         request.setLength(2);
-        request.setAttributes(List.of(requestAttribute("length-hint")));
+        request.setAttributes(List.of(stringAttribute("length-hint", "even")));
 
         // when
         RandomDataResponseDto response = adapter.randomData(token, request);
 
         // then
-        verify(attributeEngine)
-                .validateUpdateDataAttributes(token.connectorUuid(), null, definitions, request.getAttributes());
         ArgumentCaptor<RandomDataRequestV2Dto> sent = ArgumentCaptor.forClass(RandomDataRequestV2Dto.class);
         verify(operationsClient).randomData(any(), sent.capture());
         assertEquals(2, sent.getValue().getLength());
@@ -188,9 +187,10 @@ class TokenProviderV2AdapterTest {
     }
 
     @Test
-    void randomData_resolvesTokenScopeOnce_andLeavesTheSchemaUnpersisted() throws Exception {
+    void randomData_resolvesTokenScopeOnce_andNeverTouchesTheAttributeEngineForTheSchema() throws Exception {
         // given
-        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(List.of(new DataAttributeV2()));
+        when(operationsClient.listRandomAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("length-hint", false)));
         RandomDataResponseV2Dto connectorResponse = new RandomDataResponseV2Dto();
         connectorResponse.setData(new byte[]{1});
         when(operationsClient.randomData(any(), any())).thenReturn(connectorResponse);
@@ -204,6 +204,8 @@ class TokenProviderV2AdapterTest {
         // then
         verify(attributeEngine).getRequestObjectDataAttributesContent(tokenScope());
         verify(attributeEngine, never()).updateDataAttributeDefinitions(any(), any(), any());
+        verify(attributeEngine, never()).validateUpdateDataAttributes(any(), any(), any(), any());
+        verifyNoMoreInteractions(attributeEngine);
     }
 
     @Test
@@ -225,11 +227,8 @@ class TokenProviderV2AdapterTest {
     @Test
     void randomData_rejectsInvalidAttributes_beforeCallingConnector() throws Exception {
         // given
-        List<BaseAttribute> definitions = List.of(new DataAttributeV2());
-        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitions);
-        doThrow(new AttributeException("missing length-hint"))
-                .when(attributeEngine)
-                .validateUpdateDataAttributes(any(), any(), any(), any());
+        when(operationsClient.listRandomAttributes(any(), any()))
+                .thenReturn(List.of(dataAttributeDefinition("length-hint", true)));
         RandomDataRequestDto request = new RandomDataRequestDto();
         request.setLength(2);
         request.setAttributes(List.of());
@@ -263,6 +262,25 @@ class TokenProviderV2AdapterTest {
                 .builder(Resource.TOKEN, token.uuid())
                 .connector(token.connectorUuid())
                 .build();
+    }
+
+    private static DataAttributeV2 dataAttributeDefinition(String name, boolean required) {
+        DataAttributeProperties properties = new DataAttributeProperties();
+        properties.setLabel(name);
+        properties.setRequired(required);
+        DataAttributeV2 definition = new DataAttributeV2();
+        definition.setUuid(UUID.randomUUID().toString());
+        definition.setName(name);
+        definition.setContentType(AttributeContentType.STRING);
+        definition.setProperties(properties);
+        return definition;
+    }
+
+    private static RequestAttribute stringAttribute(String name, String value) {
+        RequestAttributeV2 attribute = new RequestAttributeV2();
+        attribute.setName(name);
+        attribute.setContent(List.of(new StringAttributeContentV2(value)));
+        return attribute;
     }
 
     private static RequestAttribute requestAttribute(String name) {

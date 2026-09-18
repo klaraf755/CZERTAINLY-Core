@@ -17,8 +17,8 @@ class KeyOperationScopeTest {
         UUID profileUuid = UUID.randomUUID();
         UUID tokenUuid = UUID.randomUUID();
         int usage = BitMaskEnum.convertSetToBitMask(EnumSet.of(KeyUsage.SIGN));
-        KeyOperationScope scope = new KeyOperationScope(UUID.randomUUID(), profileUuid, "profile", "desc", "token",
-                tokenUuid, true, usage, "remote-token", UUID.randomUUID());
+        KeyOperationScope scope = new KeyOperationScope(profileUuid, "profile", "desc", "token", tokenUuid, true,
+                usage);
 
         // when
         TokenProfileBasicModel profile = scope.tokenProfile();

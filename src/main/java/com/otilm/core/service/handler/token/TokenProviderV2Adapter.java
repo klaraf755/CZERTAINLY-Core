@@ -3,8 +3,6 @@ package com.otilm.core.service.handler.token;
 import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorException;
-import com.otilm.api.exception.ValidationError;
-import com.otilm.api.exception.ValidationException;
 import com.otilm.api.interfaces.client.v2.CryptographicOperationsSyncApiClient;
 import com.otilm.api.interfaces.client.v2.TokenSyncApiClient;
 import com.otilm.api.model.client.attribute.RequestAttribute;
@@ -29,6 +27,7 @@ import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenProfileBasicModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
+import com.otilm.core.util.AttributeDefinitionUtils;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
@@ -135,7 +134,7 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
             throws ConnectorException {
         TokenScopedRequestV2Dto scope = tokenScopedRequest(tokenInstance);
         List<RequestAttribute> attributes = request.getAttributes() == null ? List.of() : request.getAttributes();
-        validateOperationAttributes(tokenInstance.connectorUuid(), fetchRandomSchema(scope), attributes);
+        AttributeDefinitionUtils.validateAttributes(fetchRandomSchema(scope), attributes);
         RandomDataRequestV2Dto body = new RandomDataRequestV2Dto();
         body.setTokenAttributes(scope.getTokenAttributes());
         body.setLength(request.getLength());
@@ -149,15 +148,6 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     private List<BaseAttribute> fetchRandomSchema(TokenScopedRequestV2Dto request) throws ConnectorException {
         return requireAttributeList(operationsApiClient.listRandomAttributes(connectorInfo, request), connectorInfo,
                 "random-data attributes");
-    }
-
-    private void validateOperationAttributes(UUID connectorUuid, List<BaseAttribute> definitions,
-            List<RequestAttribute> attributes) {
-        try {
-            attributeEngine.validateUpdateDataAttributes(connectorUuid, null, definitions, attributes);
-        } catch (AttributeException e) {
-            throw new ValidationException(ValidationError.create(e.getMessage()));
-        }
     }
 
     private TokenProfileScopedRequestV2Dto tokenProfileScopedRequest(TokenProfileBasicModel tokenProfile)

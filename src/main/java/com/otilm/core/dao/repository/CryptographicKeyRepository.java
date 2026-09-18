@@ -85,12 +85,10 @@ public interface CryptographicKeyRepository extends SecurityFilterRepository<Cry
 
     @Query("""
             SELECT new com.otilm.core.model.crypto.KeyOperationScope(
-                key.uuid, profile.uuid, profile.name, profile.description, profile.tokenInstanceName,
-                profile.tokenInstanceReferenceUuid, profile.enabled, profile.usage,
-                token.tokenInstanceUuid, token.connectorUuid)
+                profile.uuid, profile.name, profile.description, profile.tokenInstanceName,
+                profile.tokenInstanceReferenceUuid, profile.enabled, profile.usage)
             FROM CryptographicKey key
             JOIN key.tokenProfile profile
-            JOIN key.tokenInstanceReference token
             WHERE key.uuid = :uuid
             """)
     Optional<KeyOperationScope> findOperationScopeByUuid(@Param("uuid") UUID uuid);

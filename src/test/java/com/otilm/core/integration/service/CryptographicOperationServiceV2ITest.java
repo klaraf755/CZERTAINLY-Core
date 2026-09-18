@@ -102,6 +102,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
 
     private CryptographyProviderV2ConnectorMock connectorMock;
     private Connector connector;
+    private ConnectorInterfaceEntity cryptographyInterface;
     private TokenInstanceReference token;
     private TokenProfile profile;
     private CryptographicKey key;
@@ -111,8 +112,8 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
     void setUp() throws Exception {
         connectorMock = connectorMockFactory.startCryptographyProviderV2();
         connector = persistV2Connector(connectorMock.getUrl());
-        ConnectorInterfaceEntity iface = persistCryptographyInterface(connector);
-        token = persistToken(iface);
+        cryptographyInterface = persistCryptographyInterface(connector);
+        token = persistToken(cryptographyInterface, "v2-operations-token");
         profile = persistProfile(List.of(KeyUsage.SIGN, KeyUsage.VERIFY, KeyUsage.ENCRYPT, KeyUsage.DECRYPT));
         key = persistKey();
         privateKey = persistKeyItem(KeyType.PRIVATE_KEY, "hsm-key-17");
@@ -146,7 +147,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         assertEquals(SIGNATURE, response.getSignatures().get(0).getData());
         assertNull(response.getSignatures().get(0).getIdentifier());
         connectorMock.verifyOperationRequestContaining("sign", expectedRequest);
-        assertEquals(KeyEventStatus.SUCCESS, lastEvent(KeyEvent.SIGN).getStatus());
+        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.SIGN).getStatus());
     }
 
     @Test
@@ -163,7 +164,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
 
         // then
         assertThrows(ConnectorException.class, sign);
-        assertEquals(KeyEventStatus.FAILED, lastEvent(KeyEvent.SIGN).getStatus());
+        assertEquals(KeyEventStatus.FAILED, onlyEvent(KeyEvent.SIGN).getStatus());
     }
 
     @Test
@@ -178,7 +179,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
 
         // then
         assertThrows(ConnectorException.class, sign);
-        assertEquals(KeyEventStatus.FAILED, lastEvent(KeyEvent.SIGN).getStatus());
+        assertEquals(KeyEventStatus.FAILED, onlyEvent(KeyEvent.SIGN).getStatus());
     }
 
     @Test
@@ -209,6 +210,21 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         // when
         Executable sign = () -> operationService
                 .signData(token.getSecuredParentUuid(), otherProfile.getSecuredUuid(), key.getUuid(),
+                        privateKey.getUuid(), signRequest());
+
+        // then
+        assertThrows(ValidationException.class, sign);
+        connectorMock.verifyNoOperationRequest("sign");
+    }
+
+    @Test
+    void signData_rejectsMismatchedTokenPath() throws Exception {
+        // given
+        TokenInstanceReference otherToken = persistToken(cryptographyInterface, "other-v2-operations-token");
+
+        // when
+        Executable sign = () -> operationService
+                .signData(otherToken.getSecuredParentUuid(), profile.getSecuredUuid(), key.getUuid(),
                         privateKey.getUuid(), signRequest());
 
         // then
@@ -264,12 +280,12 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         // then
         assertEquals(SIGNATURE, encrypted.getEncryptedData().get(0).getData());
         assertEquals(DATA, decrypted.getDecryptedData().get(0).getData());
-        assertEquals(KeyEventStatus.SUCCESS, lastEvent(KeyEvent.ENCRYPT).getStatus());
-        assertEquals(KeyEventStatus.SUCCESS, lastEvent(KeyEvent.DECRYPT).getStatus());
+        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.ENCRYPT).getStatus());
+        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.DECRYPT).getStatus());
     }
 
     @Test
-    void listSignAttributes_returnsConnectorSchema_andPersistsDefinitions() throws Exception {
+    void listSignAttributes_returnsConnectorSchema_andSendsKeyMeta() throws Exception {
         // given
         UUID attributeUuid = UUID.randomUUID();
         connectorMock.stubOperationAttributes("sign", "[" + dataAttributeJson(attributeUuid, "digest", false) + "]");
@@ -373,9 +389,9 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         return value;
     }
 
-    private TokenInstanceReference persistToken(ConnectorInterfaceEntity iface) {
+    private TokenInstanceReference persistToken(ConnectorInterfaceEntity iface, String name) {
         TokenInstanceReference value = new TokenInstanceReference();
-        value.setName("v2-operations-token");
+        value.setName(name);
         value.setConnector(connector);
         value.setConnectorUuid(connector.getUuid());
         value.setConnectorInterface(iface);
@@ -450,13 +466,14 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         return item;
     }
 
-    private CryptographicKeyEventHistory lastEvent(KeyEvent event) {
-        return eventHistoryRepository
+    private CryptographicKeyEventHistory onlyEvent(KeyEvent event) {
+        List<CryptographicKeyEventHistory> events = eventHistoryRepository
                 .findAll()
                 .stream()
                 .filter(history -> history.getEvent() == event)
-                .reduce((first, second) -> second)
-                .orElseThrow();
+                .toList();
+        assertEquals(1, events.size());
+        return events.get(0);
     }
 
     private static String dataAttributeJson(String name, boolean required) {
