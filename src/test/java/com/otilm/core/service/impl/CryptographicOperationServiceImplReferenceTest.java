@@ -126,7 +126,7 @@ class CryptographicOperationServiceImplReferenceTest {
     private static CryptographicKeyItemOperationModel activeKey(RemoteKeyReference reference) {
         return new CryptographicKeyItemOperationModel(UUID.randomUUID(), true, KeyAlgorithm.MLDSA, KeyState.ACTIVE,
                 KeyType.PRIVATE_KEY, List.of(KeyUsage.ENCRYPT, KeyUsage.DECRYPT, KeyUsage.SIGN, KeyUsage.VERIFY), null,
-                reference, UUID.randomUUID(), UUID.randomUUID());
+                reference, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, null);
     }
 
     private void execute(Operation operation, CryptographicKeyItemOperationModel key) throws Exception {
