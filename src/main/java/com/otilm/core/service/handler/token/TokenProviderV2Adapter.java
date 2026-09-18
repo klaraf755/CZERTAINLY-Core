@@ -45,12 +45,13 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     private final CryptographicOperationsSyncApiClient operationsApiClient;
 
     public TokenProviderV2Adapter(ConnectorApiFactory connectorApiFactory, AttributeEngine attributeEngine,
-            OperationAttributeResolver operationAttributeResolver, ApiClientConnectorInfo connectorInfo) {
+            OperationAttributeResolver operationAttributeResolver, ApiClientConnectorInfo connectorInfo,
+            CryptographicOperationsSyncApiClient operationsApiClient) {
         this.attributeEngine = attributeEngine;
         this.operationAttributeResolver = operationAttributeResolver;
         this.connectorInfo = connectorInfo;
         this.tokenApiClient = connectorApiFactory.getTokenInstanceApiClientV2(connectorInfo);
-        this.operationsApiClient = connectorApiFactory.getCryptographicOperationsApiClientV2(connectorInfo);
+        this.operationsApiClient = operationsApiClient;
     }
 
     @Override

@@ -20,6 +20,7 @@ import com.otilm.api.model.core.cryptography.token.TokenInstanceStatusDetailDto;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenProfileBasicModel;
+import com.otilm.core.service.handler.LegacyOperationCodec;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -147,9 +148,7 @@ public class TokenProviderV1Adapter
     @Override
     public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
             throws ConnectorException {
-        var connectorRequest = new com.otilm.api.model.connector.cryptography.operations.RandomDataRequestDto();
-        connectorRequest.setAttributes(request.getAttributes());
-        connectorRequest.setLength(request.getLength());
+        var connectorRequest = LegacyOperationCodec.randomRequest(request.getLength(), request.getAttributes());
         var connectorResponse = operationsApiClient
                 .randomData(connectorInfo, tokenInstance.tokenInstanceUuid(), connectorRequest);
         RandomDataResponseDto response = new RandomDataResponseDto();

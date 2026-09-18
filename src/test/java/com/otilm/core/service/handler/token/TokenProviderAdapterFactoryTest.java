@@ -6,6 +6,7 @@ import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.core.connector.FunctionGroupCode;
 import com.otilm.core.attribute.engine.AttributeEngine;
 import com.otilm.core.client.ConnectorApiFactory;
+import com.otilm.core.client.CryptographyV2ApiClients;
 import com.otilm.core.exception.UnsupportedCryptographyProviderVersionException;
 import com.otilm.core.model.connector.ConnectorFunctionGroupModel;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
@@ -39,7 +40,8 @@ class TokenProviderAdapterFactoryTest {
     void setUp() {
         connectorInternalService = mock(ConnectorInternalService.class);
         factory = new TokenProviderAdapterFactory(mock(ConnectorApiFactory.class), connectorInternalService,
-                mock(AttributeEngine.class), mock(OperationAttributeResolver.class));
+                mock(AttributeEngine.class), mock(OperationAttributeResolver.class),
+                mock(CryptographyV2ApiClients.class));
     }
 
     @Test

@@ -69,12 +69,11 @@ class TokenProviderV2AdapterTest {
         tokenApiClient = mock(TokenSyncApiClient.class);
         operationsClient = mock(CryptographicOperationsSyncApiClient.class);
         when(connectorApiFactory.getTokenInstanceApiClientV2(connector)).thenReturn(tokenApiClient);
-        when(connectorApiFactory.getCryptographicOperationsApiClientV2(connector)).thenReturn(operationsClient);
         when(attributeEngine.getRequestObjectDataAttributesContent(any())).thenReturn(List.of());
         when(operationAttributeResolver.resolveForConnectorRequestAsSystem(connectorUuid, List.of()))
                 .thenReturn(List.of());
         adapter = new TokenProviderV2Adapter(connectorApiFactory, attributeEngine, operationAttributeResolver,
-                connector);
+                connector, operationsClient);
         token = token(connectorUuid);
     }
 

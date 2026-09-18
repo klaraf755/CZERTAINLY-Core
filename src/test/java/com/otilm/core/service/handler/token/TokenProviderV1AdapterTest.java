@@ -11,6 +11,7 @@ import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.ImmutableTokenProfileBasicModel;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
+import com.otilm.core.service.handler.LegacyOperationFixtures;
 import java.util.Base64;
 import java.util.EnumSet;
 import java.util.List;
@@ -77,9 +78,8 @@ class TokenProviderV1AdapterTest {
         when(connectorApiFactory.getCryptographicOperationsApiClient(connectorInfo)).thenReturn(operationsClient);
         TokenInstanceBasicModel token = mock(TokenInstanceBasicModel.class);
         when(token.tokenInstanceUuid()).thenReturn("remote-token");
-        var connectorResponse = new com.otilm.api.model.connector.cryptography.operations.RandomDataResponseDto();
-        connectorResponse.setData(new byte[]{1, 2, 3});
-        when(operationsClient.randomData(eq(connectorInfo), eq("remote-token"), any())).thenReturn(connectorResponse);
+        when(operationsClient.randomData(eq(connectorInfo), eq("remote-token"), any()))
+                .thenReturn(LegacyOperationFixtures.randomResponse(new byte[]{1, 2, 3}));
         TokenProviderV1Adapter adapter = new TokenProviderV1Adapter(connectorApiFactory, connectorInfo);
         RandomDataRequestDto request = new RandomDataRequestDto();
         request.setLength(3);

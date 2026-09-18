@@ -150,12 +150,6 @@ public class ProxyClientConfig {
         return new CryptographicOperationsApiClient(proxyClient);
     }
 
-    @Bean
-    public com.otilm.api.clients.mq.v2.CryptographicOperationsApiClient mqCryptographicOperationsApiClientV2(
-            ProxyClient proxyClient, OperationResponseValidator responseValidator) {
-        return new com.otilm.api.clients.mq.v2.CryptographicOperationsApiClient(proxyClient, responseValidator);
-    }
-
     /**
      * Create MQ-based v2 CertificateApiClient bean. This bean is used when connector has proxyId set for v2 certificate
      * operations.
