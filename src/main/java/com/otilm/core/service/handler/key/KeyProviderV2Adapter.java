@@ -41,8 +41,6 @@ import com.otilm.api.model.connector.cryptography.v2.key.PrivateKeyDataResponseV
 import com.otilm.api.model.connector.cryptography.v2.key.PublicKeyDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.SecretKeyDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.CipherDataRequestV2Dto;
-import com.otilm.api.model.connector.cryptography.v2.operations.DecryptDataResponseV2Dto;
-import com.otilm.api.model.connector.cryptography.v2.operations.EncryptDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.SignDataRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.SignDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.VerifyDataRequestV2Dto;
@@ -64,10 +62,9 @@ import com.otilm.core.model.crypto.TokenProfileFullModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -263,40 +260,50 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
     @Override
     public EncryptDataResponseDto encryptData(OperationKeyContext context, CipherDataRequestDto request)
             throws ConnectorException {
-        List<RequestAttribute> attributes = orEmpty(request.getCipherAttributes());
-        validateOperationAttributes(listEncryptAttributes(context), attributes);
-        IdentifiedBatch<CipherDataV2Dto> batch = cipherBatch(request.getCipherData());
-        CipherDataRequestV2Dto body = keyScoped(new CipherDataRequestV2Dto(), context);
-        body.setCipherAttributes(attributes);
-        body.setCipherData(batch.items());
-        EncryptDataResponseV2Dto response = operationsApiClient.encryptData(connectorInfo, body);
         EncryptDataResponseDto result = new EncryptDataResponseDto();
-        result.setEncryptedData(toCipherResponse(response.getEncryptedData(), batch));
+        result
+                .setEncryptedData(cipherData(context, request,
+                        schemaRequest -> operationsApiClient.listEncryptAttributes(connectorInfo, schemaRequest),
+                        body -> operationsApiClient.encryptData(connectorInfo, body).getEncryptedData()));
         return result;
     }
 
     @Override
     public DecryptDataResponseDto decryptData(OperationKeyContext context, CipherDataRequestDto request)
             throws ConnectorException {
+        DecryptDataResponseDto result = new DecryptDataResponseDto();
+        result
+                .setDecryptedData(cipherData(context, request,
+                        schemaRequest -> operationsApiClient.listDecryptAttributes(connectorInfo, schemaRequest),
+                        body -> operationsApiClient.decryptData(connectorInfo, body).getDecryptedData()));
+        return result;
+    }
+
+    private List<CipherResponseData> cipherData(OperationKeyContext context, CipherDataRequestDto request,
+            ConnectorCall<KeyScopedRequestV2Dto, List<BaseAttribute>> schemaCall,
+            ConnectorCall<CipherDataRequestV2Dto, List<CipherDataV2Dto>> operationCall) throws ConnectorException {
+        TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(context.tokenProfile());
         List<RequestAttribute> attributes = orEmpty(request.getCipherAttributes());
-        validateOperationAttributes(listDecryptAttributes(context), attributes);
+        validateOperationAttributes(fetchSchema(schemaCall, keyScoped(new KeyScopedRequestV2Dto(), context, scope)),
+                attributes);
         IdentifiedBatch<CipherDataV2Dto> batch = cipherBatch(request.getCipherData());
-        CipherDataRequestV2Dto body = keyScoped(new CipherDataRequestV2Dto(), context);
+        CipherDataRequestV2Dto body = keyScoped(new CipherDataRequestV2Dto(), context, scope);
         body.setCipherAttributes(attributes);
         body.setCipherData(batch.items());
-        DecryptDataResponseV2Dto response = operationsApiClient.decryptData(connectorInfo, body);
-        DecryptDataResponseDto result = new DecryptDataResponseDto();
-        result.setDecryptedData(toCipherResponse(response.getDecryptedData(), batch));
-        return result;
+        return toCipherResponse(operationCall.call(body), batch);
     }
 
     @Override
     public SignDataResponseDto signData(OperationKeyContext context, SignDataRequestDto request)
             throws ConnectorException {
+        TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(context.tokenProfile());
         List<RequestAttribute> attributes = orEmpty(request.getSignatureAttributes());
-        validateOperationAttributes(listSignAttributes(context), attributes);
+        validateOperationAttributes(
+                fetchSchema(schemaRequest -> operationsApiClient.listSignAttributes(connectorInfo, schemaRequest),
+                        keyScoped(new KeyScopedRequestV2Dto(), context, scope)),
+                attributes);
         IdentifiedBatch<SignatureDataV2Dto> batch = signatureBatch(request.getData());
-        SignDataRequestV2Dto body = keyScoped(new SignDataRequestV2Dto(), context);
+        SignDataRequestV2Dto body = keyScoped(new SignDataRequestV2Dto(), context, scope);
         body.setExecutionMode(OperationExecutionMode.SYNCHRONOUS);
         body.setSignatureAttributes(attributes);
         body.setData(batch.items());
@@ -310,7 +317,7 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         result.setSignatures(responseBody.getSignatures().stream().map(item -> {
             SignatureResponseData data = new SignatureResponseData();
             data.setData(Base64.getEncoder().encodeToString(item.getData()));
-            data.setIdentifier(batch.originalIdentifier(item.getIdentifier()));
+            data.setIdentifier(batch.callerIdentifier(item.getIdentifier()));
             return data;
         }).toList());
         return result;
@@ -319,15 +326,19 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
     @Override
     public VerifyDataResponseDto verifyData(OperationKeyContext context, VerifyDataRequestDto request)
             throws ConnectorException {
+        TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(context.tokenProfile());
         List<RequestAttribute> attributes = orEmpty(request.getSignatureAttributes());
-        validateOperationAttributes(listVerifyAttributes(context), attributes);
+        validateOperationAttributes(
+                fetchSchema(schemaRequest -> operationsApiClient.listVerifyAttributes(connectorInfo, schemaRequest),
+                        keyScoped(new KeyScopedRequestV2Dto(), context, scope)),
+                attributes);
         if (request.getData() == null || request.getSignatures() == null
                 || request.getData().size() != request.getSignatures().size()) {
             throw new ValidationException(ValidationError.create("Verification requires one signature per data item."));
         }
         IdentifiedBatch<SignatureDataV2Dto> data = signatureBatch(request.getData());
         IdentifiedBatch<SignatureDataV2Dto> signatures = signatureBatch(request.getSignatures());
-        VerifyDataRequestV2Dto body = keyScoped(new VerifyDataRequestV2Dto(), context);
+        VerifyDataRequestV2Dto body = keyScoped(new VerifyDataRequestV2Dto(), context, scope);
         body.setSignatureAttributes(attributes);
         body.setData(data.items());
         body.setSignatures(signatures.items());
@@ -336,7 +347,7 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         result.setVerifications(response.getVerifications().stream().map(item -> {
             VerificationResponseData verification = new VerificationResponseData();
             verification.setResult(Boolean.TRUE.equals(item.getResult()));
-            verification.setIdentifier(data.originalIdentifier(item.getIdentifier()));
+            verification.setIdentifier(data.callerIdentifier(item.getIdentifier()));
             verification.setDetails(item.getDetails());
             return verification;
         }).toList());
@@ -345,37 +356,43 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
 
     @Override
     public List<BaseAttribute> listEncryptAttributes(OperationKeyContext context) throws ConnectorException {
-        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context);
-        return publishDefinitions(request, operationsApiClient.listEncryptAttributes(connectorInfo, request));
+        return listOperationAttributes(context,
+                request -> operationsApiClient.listEncryptAttributes(connectorInfo, request));
     }
 
     @Override
     public List<BaseAttribute> listDecryptAttributes(OperationKeyContext context) throws ConnectorException {
-        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context);
-        return publishDefinitions(request, operationsApiClient.listDecryptAttributes(connectorInfo, request));
+        return listOperationAttributes(context,
+                request -> operationsApiClient.listDecryptAttributes(connectorInfo, request));
     }
 
     @Override
     public List<BaseAttribute> listSignAttributes(OperationKeyContext context) throws ConnectorException {
-        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context);
-        return publishDefinitions(request, operationsApiClient.listSignAttributes(connectorInfo, request));
+        return listOperationAttributes(context,
+                request -> operationsApiClient.listSignAttributes(connectorInfo, request));
     }
 
     @Override
     public List<BaseAttribute> listVerifyAttributes(OperationKeyContext context) throws ConnectorException {
-        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context);
-        return publishDefinitions(request, operationsApiClient.listVerifyAttributes(connectorInfo, request));
+        return listOperationAttributes(context,
+                request -> operationsApiClient.listVerifyAttributes(connectorInfo, request));
     }
 
-    private <T extends KeyScopedRequestV2Dto> T keyScoped(T request, OperationKeyContext context)
-            throws ConnectorException {
+    private List<BaseAttribute> listOperationAttributes(OperationKeyContext context,
+            ConnectorCall<KeyScopedRequestV2Dto, List<BaseAttribute>> schemaCall) throws ConnectorException {
+        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context,
+                tokenProfileScopedRequest(context.tokenProfile()));
+        return publishDefinitions(request, fetchSchema(schemaCall, request));
+    }
+
+    private <T extends KeyScopedRequestV2Dto> T keyScoped(T request, OperationKeyContext context,
+            TokenProfileScopedRequestV2Dto scope) {
         if (!(context
                 .keyItem()
                 .reference() instanceof RemoteKeyReference.MetadataReference(List<MetadataAttribute> keyMeta))
                 || keyMeta == null || keyMeta.isEmpty()) {
             throw new IllegalArgumentException("V2 cryptographic operations require a non-empty metadata handle.");
         }
-        TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(context.tokenProfile());
         request.setTokenAttributes(scope.getTokenAttributes());
         request.setTokenProfileAttributes(scope.getTokenProfileAttributes());
         request.setKeyUsages(scope.getKeyUsages());
@@ -383,12 +400,18 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return request;
     }
 
-    /** Guards expanded secrets and persists the schema so attribute callbacks can resolve against it. */
-    private List<BaseAttribute> publishDefinitions(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions)
-            throws ConnectorException {
+    private List<BaseAttribute> fetchSchema(ConnectorCall<KeyScopedRequestV2Dto, List<BaseAttribute>> schemaCall,
+            KeyScopedRequestV2Dto request) throws ConnectorException {
+        List<BaseAttribute> definitions = schemaCall.call(request);
         if (definitions == null) {
             throw new ConnectorException("Connector returned no attribute schema", connectorInfo);
         }
+        return definitions;
+    }
+
+    /** Guards expanded secrets and persists the schema so attribute callbacks can resolve against it. */
+    private List<BaseAttribute> publishDefinitions(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions)
+            throws ConnectorException {
         Set<String> expandedSecrets = new HashSet<>();
         outboundSecretContainment.recordExpandedSecretsFromRequest(request.getTokenAttributes(), expandedSecrets);
         outboundSecretContainment
@@ -434,7 +457,7 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return items.stream().map(item -> {
             CipherResponseData data = new CipherResponseData();
             data.setData(Base64.getEncoder().encodeToString(item.getData()));
-            data.setIdentifier(batch.originalIdentifier(item.getIdentifier()));
+            data.setIdentifier(batch.callerIdentifier(item.getIdentifier()));
             return data;
         }).toList();
     }
@@ -443,32 +466,30 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return base64 == null ? null : Base64.getDecoder().decode(base64);
     }
 
-    /**
-     * Batch items sent to a v2 connector with a non-blank identifier each. Items the caller left unidentified get their
-     * position, and the response is translated back to what the caller sent.
-     */
-    private record IdentifiedBatch<T>(List<T> items, Map<String, String> originalByIdentifier) {
+    /** Sends every item under its position; the caller's identifiers (possibly null) come back by position. */
+    private record IdentifiedBatch<T>(List<T> items, List<String> callerIdentifiers) {
 
         static <S, T> IdentifiedBatch<T> of(List<S> source, Function<S, String> identifierOf,
                 BiFunction<S, String, T> toItem) {
             List<T> items = new ArrayList<>(source.size());
-            Map<String, String> originals = new HashMap<>();
+            List<String> callerIdentifiers = new ArrayList<>(source.size());
             for (int index = 0; index < source.size(); index++) {
                 S item = source.get(index);
-                String original = identifierOf.apply(item);
-                String identifier = original == null || original.isBlank() ? Integer.toString(index) : original;
-                if (original != null) {
-                    originals.put(identifier, original);
-                }
-                items.add(toItem.apply(item, identifier));
+                callerIdentifiers.add(identifierOf.apply(item));
+                items.add(toItem.apply(item, Integer.toString(index)));
             }
-            return new IdentifiedBatch<>(List.copyOf(items), Map.copyOf(originals));
+            return new IdentifiedBatch<>(List.copyOf(items), Collections.unmodifiableList(callerIdentifiers));
         }
 
-        /** The identifier the caller sent for this item, or null when Core assigned it. */
-        String originalIdentifier(String identifier) {
-            return originalByIdentifier.get(identifier);
+        /** The interfaces client already rejected responses whose identifiers do not echo the request's. */
+        String callerIdentifier(String positionalIdentifier) {
+            return callerIdentifiers.get(Integer.parseInt(positionalIdentifier));
         }
+    }
+
+    @FunctionalInterface
+    private interface ConnectorCall<S, T> {
+        T call(S request) throws ConnectorException;
     }
 
 }

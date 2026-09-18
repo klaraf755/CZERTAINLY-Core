@@ -4,6 +4,7 @@ import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.api.model.core.connector.FunctionGroupCode;
 import com.otilm.core.attribute.engine.AttributeEngine;
+import com.otilm.core.attribute.engine.OutboundSecretContainment;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.client.CryptographyV2ApiClients;
 import com.otilm.core.dao.entity.Connector;
@@ -28,15 +29,18 @@ public class TokenProviderAdapterFactory {
     private final ConnectorInternalService connectorInternalService;
     private final AttributeEngine attributeEngine;
     private final OperationAttributeResolver operationAttributeResolver;
+    private final OutboundSecretContainment outboundSecretContainment;
     private final CryptographyV2ApiClients cryptographyV2ApiClients;
 
     public TokenProviderAdapterFactory(ConnectorApiFactory connectorApiFactory,
             ConnectorInternalService connectorInternalService, AttributeEngine attributeEngine,
-            OperationAttributeResolver operationAttributeResolver, CryptographyV2ApiClients cryptographyV2ApiClients) {
+            OperationAttributeResolver operationAttributeResolver, OutboundSecretContainment outboundSecretContainment,
+            CryptographyV2ApiClients cryptographyV2ApiClients) {
         this.connectorApiFactory = connectorApiFactory;
         this.connectorInternalService = connectorInternalService;
         this.attributeEngine = attributeEngine;
         this.operationAttributeResolver = operationAttributeResolver;
+        this.outboundSecretContainment = outboundSecretContainment;
         this.cryptographyV2ApiClients = cryptographyV2ApiClients;
     }
 
@@ -65,10 +69,9 @@ public class TokenProviderAdapterFactory {
                 .findFirst()
                 .orElse(null);
         if (v2Interface != null) {
-            return new TokenProviderBinding(
-                    new TokenProviderV2Adapter(connectorApiFactory, attributeEngine, operationAttributeResolver,
-                            connector, cryptographyV2ApiClients.getCryptographicOperationsApiClient(connector)),
-                    v2Interface);
+            return new TokenProviderBinding(new TokenProviderV2Adapter(connectorApiFactory, attributeEngine,
+                    operationAttributeResolver, outboundSecretContainment, connector,
+                    cryptographyV2ApiClients.getCryptographicOperationsApiClient(connector)), v2Interface);
         }
         if (!cryptographyInterfaces.isEmpty()) {
             String versions = cryptographyInterfaces
@@ -136,7 +139,8 @@ public class TokenProviderAdapterFactory {
         }
         if ("v2".equals(version)) {
             return new TokenProviderV2Adapter(connectorApiFactory, attributeEngine, operationAttributeResolver,
-                    connector, cryptographyV2ApiClients.getCryptographicOperationsApiClient(connector));
+                    outboundSecretContainment, connector,
+                    cryptographyV2ApiClients.getCryptographicOperationsApiClient(connector));
         }
         throw new UnsupportedCryptographyProviderVersionException(
                 "Unsupported cryptography connector interface version: " + version + " (" + owner + ")");

@@ -1,5 +1,6 @@
 package com.otilm.core.service.handler.token;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.ValidationException;
@@ -13,7 +14,10 @@ import com.otilm.api.model.client.cryptography.key.KeyRequestType;
 import com.otilm.api.model.client.cryptography.operations.RandomDataRequestDto;
 import com.otilm.api.model.client.cryptography.operations.RandomDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
+import com.otilm.api.model.common.attribute.common.content.data.SecretAttributeContentData;
 import com.otilm.api.model.common.attribute.v2.DataAttributeV2;
+import com.otilm.api.model.common.attribute.v2.content.SecretAttributeContentV2;
+import com.otilm.api.model.common.attribute.v2.content.StringAttributeContentV2;
 import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.connector.cryptography.v2.TokenProfileScopedRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.RandomDataRequestV2Dto;
@@ -23,6 +27,8 @@ import com.otilm.api.model.core.auth.Resource;
 import com.otilm.api.model.core.connector.ConnectorStatus;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.core.attribute.engine.AttributeEngine;
+import com.otilm.core.attribute.engine.OutboundSecretContainment;
+import com.otilm.core.attribute.engine.OutboundSecretLeakException;
 import com.otilm.core.attribute.engine.records.ObjectAttributeContentInfo;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.connector.ImmutableConnectorFullModel;
@@ -73,7 +79,7 @@ class TokenProviderV2AdapterTest {
         when(operationAttributeResolver.resolveForConnectorRequestAsSystem(connectorUuid, List.of()))
                 .thenReturn(List.of());
         adapter = new TokenProviderV2Adapter(connectorApiFactory, attributeEngine, operationAttributeResolver,
-                connector, operationsClient);
+                new OutboundSecretContainment(new ObjectMapper()), connector, operationsClient);
         token = token(connectorUuid);
     }
 
@@ -182,6 +188,41 @@ class TokenProviderV2AdapterTest {
     }
 
     @Test
+    void randomData_resolvesTokenScopeOnce_andLeavesTheSchemaUnpersisted() throws Exception {
+        // given
+        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(List.of(new DataAttributeV2()));
+        RandomDataResponseV2Dto connectorResponse = new RandomDataResponseV2Dto();
+        connectorResponse.setData(new byte[]{1});
+        when(operationsClient.randomData(any(), any())).thenReturn(connectorResponse);
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(1);
+        request.setAttributes(List.of());
+
+        // when
+        adapter.randomData(token, request);
+
+        // then
+        verify(attributeEngine).getRequestObjectDataAttributesContent(tokenScope());
+        verify(attributeEngine, never()).updateDataAttributeDefinitions(any(), any(), any());
+    }
+
+    @Test
+    void listRandomAttributes_rejectsSchemaEchoingAnExpandedSecret() throws Exception {
+        // given
+        String expandedSecret = "resolved-token-password";
+        stubAttributes(Resource.TOKEN, token.uuid(), List.of(requestAttribute("stored-token")),
+                List.of(secretAttribute(expandedSecret)));
+        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitionsWithDefault(expandedSecret));
+
+        // when
+        Executable listDefinitions = () -> adapter.listRandomAttributes(token);
+
+        // then
+        assertThrows(OutboundSecretLeakException.class, listDefinitions);
+        verify(attributeEngine, never()).updateDataAttributeDefinitions(any(), any(), any());
+    }
+
+    @Test
     void randomData_rejectsInvalidAttributes_beforeCallingConnector() throws Exception {
         // given
         List<BaseAttribute> definitions = List.of(new DataAttributeV2());
@@ -217,10 +258,34 @@ class TokenProviderV2AdapterTest {
                 .thenReturn(resolved);
     }
 
+    private ObjectAttributeContentInfo tokenScope() {
+        return ObjectAttributeContentInfo
+                .builder(Resource.TOKEN, token.uuid())
+                .connector(token.connectorUuid())
+                .build();
+    }
+
     private static RequestAttribute requestAttribute(String name) {
         RequestAttributeV2 attribute = new RequestAttributeV2();
         attribute.setName(name);
         return attribute;
+    }
+
+    private static RequestAttribute secretAttribute(String secret) {
+        RequestAttributeV2 attribute = new RequestAttributeV2();
+        attribute.setName("credential");
+        attribute
+                .setContent(List
+                        .of(new SecretAttributeContentV2("credential-reference",
+                                new SecretAttributeContentData(secret))));
+        return attribute;
+    }
+
+    private static List<BaseAttribute> definitionsWithDefault(String value) {
+        DataAttributeV2 definition = new DataAttributeV2();
+        definition.setName("length-hint");
+        definition.setContent(List.of(new StringAttributeContentV2(value)));
+        return List.of(definition);
     }
 
     private static ImmutableConnectorFullModel connector(UUID connectorUuid) {

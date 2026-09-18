@@ -316,8 +316,11 @@ public class KeyProviderV1Adapter implements KeyProviderAdapter, KeyCreationVali
                 "This cryptographic operation requires a v1 remote key UUID; metadata references are not supported.");
     }
 
-    private static String remoteTokenUuid(CryptographicKeyItemOperationModel key) {
-        return key.tokenInstanceUuid() == null ? null : key.tokenInstanceUuid().toString();
+    private static String remoteTokenUuid(CryptographicKeyItemOperationModel key) throws ConnectorException {
+        if (key.tokenInstanceUuid() == null) {
+            throw new ConnectorException("This cryptographic operation requires a v1 remote token UUID.");
+        }
+        return key.tokenInstanceUuid().toString();
     }
 
     private static List<OperationDataItem> cipherItems(List<CipherRequestData> items) {

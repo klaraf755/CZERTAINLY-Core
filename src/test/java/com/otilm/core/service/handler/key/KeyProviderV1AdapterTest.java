@@ -374,6 +374,24 @@ class KeyProviderV1AdapterTest {
     }
 
     @Test
+    void signData_rejectsMissingTokenInstanceUuid_beforeCallingConnector() {
+        // given
+        OperationKeyContext context = OperationKeyContext
+                .legacy(keyItem(KeyAlgorithm.MLDSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()), null));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of());
+
+        // when
+        Executable sign = () -> adapter.signData(context, request);
+
+        // then
+        ConnectorException failure = assertThrows(ConnectorException.class, sign);
+        assertEquals("This cryptographic operation requires a v1 remote token UUID.", failure.getMessage());
+        verifyNoInteractions(operationsClient);
+    }
+
+    @Test
     void signData_rejectsUnknownSignatureAttribute_forRsaKey() {
         // given
         OperationKeyContext context = OperationKeyContext

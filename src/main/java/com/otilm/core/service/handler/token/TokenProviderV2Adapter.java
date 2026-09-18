@@ -23,12 +23,14 @@ import com.otilm.api.model.core.auth.Resource;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.api.model.core.cryptography.token.TokenInstanceStatusDetailDto;
 import com.otilm.core.attribute.engine.AttributeEngine;
+import com.otilm.core.attribute.engine.OutboundSecretContainment;
 import com.otilm.core.attribute.engine.records.ObjectAttributeContentInfo;
 import com.otilm.core.client.ConnectorApiFactory;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
 import com.otilm.core.model.crypto.TokenProfileBasicModel;
 import com.otilm.core.service.handler.OperationAttributeResolver;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,15 +42,17 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
 
     private final AttributeEngine attributeEngine;
     private final OperationAttributeResolver operationAttributeResolver;
+    private final OutboundSecretContainment outboundSecretContainment;
     private final ApiClientConnectorInfo connectorInfo;
     private final TokenSyncApiClient tokenApiClient;
     private final CryptographicOperationsSyncApiClient operationsApiClient;
 
     public TokenProviderV2Adapter(ConnectorApiFactory connectorApiFactory, AttributeEngine attributeEngine,
-            OperationAttributeResolver operationAttributeResolver, ApiClientConnectorInfo connectorInfo,
-            CryptographicOperationsSyncApiClient operationsApiClient) {
+            OperationAttributeResolver operationAttributeResolver, OutboundSecretContainment outboundSecretContainment,
+            ApiClientConnectorInfo connectorInfo, CryptographicOperationsSyncApiClient operationsApiClient) {
         this.attributeEngine = attributeEngine;
         this.operationAttributeResolver = operationAttributeResolver;
+        this.outboundSecretContainment = outboundSecretContainment;
         this.connectorInfo = connectorInfo;
         this.tokenApiClient = connectorApiFactory.getTokenInstanceApiClientV2(connectorInfo);
         this.operationsApiClient = operationsApiClient;
@@ -58,8 +62,7 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     public List<BaseAttribute> listTokenAttributes(@Nullable String kind) throws ConnectorException {
         List<BaseAttribute> response = tokenApiClient.listTokenAttributes(connectorInfo);
         List<BaseAttribute> definitions = requireAttributeList(response, connectorInfo, "token attributes");
-        persistAttributeDefinitions(UUID.fromString(connectorInfo.getUuid()), definitions, connectorInfo,
-                "token attributes");
+        persistAttributeDefinitions(UUID.fromString(connectorInfo.getUuid()), null, definitions, "token attributes");
         return definitions;
     }
 
@@ -82,11 +85,10 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     @Override
     public List<BaseAttribute> listTokenProfileAttributes(TokenInstanceBasicModel tokenInstance)
             throws ConnectorException {
-        List<BaseAttribute> response = tokenApiClient
-                .listTokenProfileAttributes(connectorInfo, tokenScopedRequest(tokenInstance));
+        TokenScopedRequestV2Dto request = tokenScopedRequest(tokenInstance);
+        List<BaseAttribute> response = tokenApiClient.listTokenProfileAttributes(connectorInfo, request);
         List<BaseAttribute> definitions = requireAttributeList(response, connectorInfo, "token-profile attributes");
-        persistAttributeDefinitions(tokenInstance.connectorUuid(), definitions, connectorInfo,
-                "token-profile attributes");
+        persistAttributeDefinitions(tokenInstance.connectorUuid(), request, definitions, "token-profile attributes");
         return definitions;
     }
 
@@ -106,47 +108,47 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         return tokenApiClient.listSupportedKeyRequestTypes(connectorInfo, tokenProfileScopedRequest(tokenProfile));
     }
 
-    private <T extends TokenScopedRequestV2Dto> T tokenScoped(T request, TokenInstanceBasicModel tokenInstance)
+    private TokenScopedRequestV2Dto tokenScopedRequest(TokenInstanceBasicModel tokenInstance)
             throws ConnectorException {
         List<RequestAttribute> storedAttributes = attributeEngine
                 .getRequestObjectDataAttributesContent(ObjectAttributeContentInfo
                         .builder(Resource.TOKEN, tokenInstance.uuid())
                         .connector(tokenInstance.connectorUuid())
                         .build());
+        TokenScopedRequestV2Dto request = new TokenScopedRequestV2Dto();
         request
                 .setTokenAttributes(operationAttributeResolver
                         .resolveForConnectorRequestAsSystem(tokenInstance.connectorUuid(), storedAttributes));
         return request;
     }
 
-    private TokenScopedRequestV2Dto tokenScopedRequest(TokenInstanceBasicModel tokenInstance)
-            throws ConnectorException {
-        return tokenScoped(new TokenScopedRequestV2Dto(), tokenInstance);
-    }
-
     @Override
     public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException {
-        List<BaseAttribute> response = operationsApiClient
-                .listRandomAttributes(connectorInfo, tokenScopedRequest(tokenInstance));
-        List<BaseAttribute> definitions = requireAttributeList(response, connectorInfo, "random-data attributes");
-        persistAttributeDefinitions(tokenInstance.connectorUuid(), definitions, connectorInfo,
-                "random-data attributes");
+        TokenScopedRequestV2Dto request = tokenScopedRequest(tokenInstance);
+        List<BaseAttribute> definitions = fetchRandomSchema(request);
+        persistAttributeDefinitions(tokenInstance.connectorUuid(), request, definitions, "random-data attributes");
         return definitions;
     }
 
     @Override
     public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
             throws ConnectorException {
-        List<BaseAttribute> definitions = listRandomAttributes(tokenInstance);
+        TokenScopedRequestV2Dto scope = tokenScopedRequest(tokenInstance);
         List<RequestAttribute> attributes = request.getAttributes() == null ? List.of() : request.getAttributes();
-        validateOperationAttributes(tokenInstance.connectorUuid(), definitions, attributes);
-        RandomDataRequestV2Dto body = tokenScoped(new RandomDataRequestV2Dto(), tokenInstance);
+        validateOperationAttributes(tokenInstance.connectorUuid(), fetchRandomSchema(scope), attributes);
+        RandomDataRequestV2Dto body = new RandomDataRequestV2Dto();
+        body.setTokenAttributes(scope.getTokenAttributes());
         body.setLength(request.getLength());
         body.setOperationAttributes(attributes);
         RandomDataResponseV2Dto connectorResponse = operationsApiClient.randomData(connectorInfo, body);
         RandomDataResponseDto response = new RandomDataResponseDto();
         response.setData(Base64.getEncoder().encodeToString(connectorResponse.getData()));
         return response;
+    }
+
+    private List<BaseAttribute> fetchRandomSchema(TokenScopedRequestV2Dto request) throws ConnectorException {
+        return requireAttributeList(operationsApiClient.listRandomAttributes(connectorInfo, request), connectorInfo,
+                "random-data attributes");
     }
 
     private void validateOperationAttributes(UUID connectorUuid, List<BaseAttribute> definitions,
@@ -202,8 +204,23 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         return response;
     }
 
-    private void persistAttributeDefinitions(UUID connectorUuid, List<BaseAttribute> definitions,
-            ApiClientConnectorInfo connectorInfo, String operation) throws ConnectorException {
+    /**
+     * Guards the connector's schema against an echo of a secret the matching request expanded, then persists it.
+     *
+     * @param sentRequest the request whose resolved attributes went out, or null when the call sent none
+     */
+    private void persistAttributeDefinitions(UUID connectorUuid, @Nullable TokenScopedRequestV2Dto sentRequest,
+            List<BaseAttribute> definitions, String operation) throws ConnectorException {
+        Set<String> expandedSecrets = new HashSet<>();
+        if (sentRequest != null) {
+            outboundSecretContainment
+                    .recordExpandedSecretsFromRequest(sentRequest.getTokenAttributes(), expandedSecrets);
+            if (sentRequest instanceof TokenProfileScopedRequestV2Dto profileScoped) {
+                outboundSecretContainment
+                        .recordExpandedSecretsFromRequest(profileScoped.getTokenProfileAttributes(), expandedSecrets);
+            }
+        }
+        outboundSecretContainment.assertNoExpandedSecretOutbound(definitions, expandedSecrets);
         try {
             attributeEngine.updateDataAttributeDefinitions(connectorUuid, null, definitions);
         } catch (AttributeException e) {
