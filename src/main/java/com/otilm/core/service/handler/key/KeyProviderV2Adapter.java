@@ -6,6 +6,13 @@ import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.interfaces.client.v2.KeySyncApiClient;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.cryptography.key.KeyRequestType;
+import com.otilm.api.model.client.cryptography.operations.CipherDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.DecryptDataResponseDto;
+import com.otilm.api.model.client.cryptography.operations.EncryptDataResponseDto;
+import com.otilm.api.model.client.cryptography.operations.SignDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.SignDataResponseDto;
+import com.otilm.api.model.client.cryptography.operations.VerifyDataRequestDto;
+import com.otilm.api.model.client.cryptography.operations.VerifyDataResponseDto;
 import com.otilm.api.model.common.attribute.common.BaseAttribute;
 import com.otilm.api.model.common.attribute.common.MetadataAttribute;
 import com.otilm.api.model.common.enums.cryptography.KeyFormat;
@@ -224,6 +231,46 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         request.setTokenProfileAttributes(resolvedTokenProfileAttributes);
         request.setKeyUsages(Set.copyOf(tokenProfile.usages()));
         return request;
+    }
+
+    @Override
+    public EncryptDataResponseDto encryptData(OperationKeyContext context, CipherDataRequestDto request) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public DecryptDataResponseDto decryptData(OperationKeyContext context, CipherDataRequestDto request) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public SignDataResponseDto signData(OperationKeyContext context, SignDataRequestDto request) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public VerifyDataResponseDto verifyData(OperationKeyContext context, VerifyDataRequestDto request) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public List<BaseAttribute> listEncryptAttributes(OperationKeyContext context) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public List<BaseAttribute> listDecryptAttributes(OperationKeyContext context) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public List<BaseAttribute> listSignAttributes(OperationKeyContext context) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
+    }
+
+    @Override
+    public List<BaseAttribute> listVerifyAttributes(OperationKeyContext context) {
+        throw new UnsupportedOperationException("Implemented in the next task.");
     }
 
 }
