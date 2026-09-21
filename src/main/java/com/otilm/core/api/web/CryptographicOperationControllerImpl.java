@@ -111,6 +111,15 @@ public class CryptographicOperationControllerImpl implements CryptographicOperat
     }
 
     @Override
+    @AuditLogged(module = Module.CRYPTOGRAPHIC_KEYS, resource = Resource.TOKEN, operation = Operation.RANDOM_DATA)
+    public RandomDataResponseDto randomData(@LogResource(uuid = true) String tokenInstanceUuid, String tokenProfileUuid,
+            RandomDataRequestDto request) throws ConnectorException, NotFoundException {
+        return cryptographicOperationService
+                .randomData(SecuredParentUUID.fromString(tokenInstanceUuid), SecuredUUID.fromString(tokenProfileUuid),
+                        request);
+    }
+
+    @Override
     @AuditLogged(module = Module.CRYPTOGRAPHIC_KEYS, resource = Resource.ATTRIBUTE, name = "signature",
             affiliatedResource = Resource.CRYPTOGRAPHIC_KEY_ITEM, operation = Operation.LIST_ATTRIBUTES)
     public List<BaseAttribute> listSignatureAttributes(String tokenInstanceUuid, String tokenProfileUuid, String uuid,
@@ -163,5 +172,16 @@ public class CryptographicOperationControllerImpl implements CryptographicOperat
             @LogResource(uuid = true, affiliated = true) String tokenInstanceUuid)
             throws ConnectorException, NotFoundException {
         return cryptographicOperationService.listRandomAttributes(SecuredUUID.fromString(tokenInstanceUuid));
+    }
+
+    @Override
+    @AuditLogged(module = Module.CRYPTOGRAPHIC_KEYS, resource = Resource.ATTRIBUTE, name = "random",
+            affiliatedResource = Resource.TOKEN, operation = Operation.LIST_ATTRIBUTES)
+    public List<BaseAttribute> listRandomAttributes(
+            @LogResource(uuid = true, affiliated = true) String tokenInstanceUuid, String tokenProfileUuid)
+            throws ConnectorException, NotFoundException {
+        return cryptographicOperationService
+                .listRandomAttributes(SecuredParentUUID.fromString(tokenInstanceUuid),
+                        SecuredUUID.fromString(tokenProfileUuid));
     }
 }

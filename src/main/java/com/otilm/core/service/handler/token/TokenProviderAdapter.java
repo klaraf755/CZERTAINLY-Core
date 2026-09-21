@@ -67,9 +67,12 @@ public interface TokenProviderAdapter {
      */
     List<KeyRequestType> listSupportedKeyRequestTypes(TokenProfileBasicModel tokenProfile) throws ConnectorException;
 
-    List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException;
+    /** The token profile is null only for a legacy token, whose random endpoints are scoped by token alone. */
+    List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance,
+            @Nullable TokenProfileBasicModel tokenProfile) throws ConnectorException;
 
-    RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
-            throws ConnectorException;
+    /** The token profile is null only for a legacy token, whose random endpoints are scoped by token alone. */
+    RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance,
+            @Nullable TokenProfileBasicModel tokenProfile, RandomDataRequestDto request) throws ConnectorException;
 
 }

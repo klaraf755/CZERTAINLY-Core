@@ -82,12 +82,14 @@ class TokenProviderV1AdapterTest {
         when(operationsClient.randomData(eq(connectorInfo), eq("remote-token"), any()))
                 .thenReturn(LegacyOperationFixtures.randomResponse(new byte[]{1, 2, 3}));
         TokenProviderV1Adapter adapter = new TokenProviderV1Adapter(connectorApiFactory, connectorInfo);
+        var profile = new ImmutableTokenProfileBasicModel(UUID.randomUUID(), "profile", null, "token",
+                UUID.randomUUID(), true, List.of());
         RandomDataRequestDto request = new RandomDataRequestDto();
         request.setLength(3);
         request.setAttributes(List.of());
 
         // when
-        RandomDataResponseDto response = adapter.randomData(token, request);
+        RandomDataResponseDto response = adapter.randomData(token, profile, request);
 
         // then
         assertEquals(Base64.getEncoder().encodeToString(new byte[]{1, 2, 3}), response.getData());

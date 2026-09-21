@@ -23,7 +23,6 @@ import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.connector.cryptography.v2.TokenProfileScopedRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.RandomDataRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.operations.RandomDataResponseV2Dto;
-import com.otilm.api.model.connector.cryptography.v2.token.TokenScopedRequestV2Dto;
 import com.otilm.api.model.core.auth.Resource;
 import com.otilm.api.model.core.connector.ConnectorStatus;
 import com.otilm.api.model.core.cryptography.key.KeyUsage;
@@ -145,27 +144,40 @@ class TokenProviderV2AdapterTest {
     }
 
     @Test
-    void listRandomAttributes_sendsTokenScopeAndPersistsDefinitions() throws Exception {
+    void listRandomAttributes_sendsTokenProfileScopeAndPersistsDefinitions() throws Exception {
         // given
+        var profile = profile();
         List<RequestAttribute> resolvedToken = List.of(requestAttribute("resolved-token"));
+        List<RequestAttribute> resolvedProfile = List.of(requestAttribute("resolved-profile"));
         stubAttributes(Resource.TOKEN, token.uuid(), List.of(requestAttribute("stored-token")), resolvedToken);
+        stubAttributes(Resource.TOKEN_PROFILE, profile.uuid(), List.of(requestAttribute("stored-profile")),
+                resolvedProfile);
         List<BaseAttribute> definitions = List.of(new DataAttributeV2());
         when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitions);
 
         // when
-        List<BaseAttribute> result = adapter.listRandomAttributes(token);
+        List<BaseAttribute> result = adapter.listRandomAttributes(token, profile);
 
         // then
         assertSame(definitions, result);
-        ArgumentCaptor<TokenScopedRequestV2Dto> request = ArgumentCaptor.forClass(TokenScopedRequestV2Dto.class);
+        ArgumentCaptor<TokenProfileScopedRequestV2Dto> request = ArgumentCaptor
+                .forClass(TokenProfileScopedRequestV2Dto.class);
         verify(operationsClient).listRandomAttributes(any(), request.capture());
-        assertSame(resolvedToken, request.getValue().getTokenAttributes());
+        assertEquals(resolvedToken, request.getValue().getTokenAttributes());
+        assertEquals(resolvedProfile, request.getValue().getTokenProfileAttributes());
+        assertEquals(Set.copyOf(profile.usages()), request.getValue().getKeyUsages());
         verify(attributeEngine).updateDataAttributeDefinitions(token.connectorUuid(), null, definitions);
     }
 
     @Test
-    void randomData_validatesAttributesAgainstSchema_thenForwardsLengthAndEncodesData() throws Exception {
+    void randomData_validatesAttributesAgainstSchema_thenForwardsScopeLengthAndEncodesData() throws Exception {
         // given
+        var profile = profile();
+        List<RequestAttribute> resolvedToken = List.of(requestAttribute("resolved-token"));
+        List<RequestAttribute> resolvedProfile = List.of(requestAttribute("resolved-profile"));
+        stubAttributes(Resource.TOKEN, token.uuid(), List.of(requestAttribute("stored-token")), resolvedToken);
+        stubAttributes(Resource.TOKEN_PROFILE, profile.uuid(), List.of(requestAttribute("stored-profile")),
+                resolvedProfile);
         when(operationsClient.listRandomAttributes(any(), any()))
                 .thenReturn(List.of(dataAttributeDefinition("length-hint", true)));
         RandomDataResponseV2Dto connectorResponse = new RandomDataResponseV2Dto();
@@ -176,19 +188,23 @@ class TokenProviderV2AdapterTest {
         request.setAttributes(List.of(stringAttribute("length-hint", "even")));
 
         // when
-        RandomDataResponseDto response = adapter.randomData(token, request);
+        RandomDataResponseDto response = adapter.randomData(token, profile, request);
 
         // then
         ArgumentCaptor<RandomDataRequestV2Dto> sent = ArgumentCaptor.forClass(RandomDataRequestV2Dto.class);
         verify(operationsClient).randomData(any(), sent.capture());
+        assertEquals(resolvedToken, sent.getValue().getTokenAttributes());
+        assertEquals(resolvedProfile, sent.getValue().getTokenProfileAttributes());
+        assertEquals(Set.copyOf(profile.usages()), sent.getValue().getKeyUsages());
         assertEquals(2, sent.getValue().getLength());
         assertSame(request.getAttributes(), sent.getValue().getOperationAttributes());
         assertEquals(Base64.getEncoder().encodeToString(new byte[]{9, 8}), response.getData());
     }
 
     @Test
-    void randomData_resolvesTokenScopeOnce_andNeverTouchesTheAttributeEngineForTheSchema() throws Exception {
+    void randomData_resolvesTokenProfileScopeOnce_andNeverTouchesTheAttributeEngineForTheSchema() throws Exception {
         // given
+        var profile = profile();
         when(operationsClient.listRandomAttributes(any(), any()))
                 .thenReturn(List.of(dataAttributeDefinition("length-hint", false)));
         RandomDataResponseV2Dto connectorResponse = new RandomDataResponseV2Dto();
@@ -199,10 +215,15 @@ class TokenProviderV2AdapterTest {
         request.setAttributes(List.of());
 
         // when
-        adapter.randomData(token, request);
+        adapter.randomData(token, profile, request);
 
         // then
         verify(attributeEngine).getRequestObjectDataAttributesContent(tokenScope());
+        verify(attributeEngine)
+                .getRequestObjectDataAttributesContent(ObjectAttributeContentInfo
+                        .builder(Resource.TOKEN_PROFILE, profile.uuid())
+                        .connector(token.connectorUuid())
+                        .build());
         verify(attributeEngine, never()).updateDataAttributeDefinitions(any(), any(), any());
         verify(attributeEngine, never()).validateUpdateDataAttributes(any(), any(), any(), any());
         verifyNoMoreInteractions(attributeEngine);
@@ -211,13 +232,15 @@ class TokenProviderV2AdapterTest {
     @Test
     void listRandomAttributes_rejectsSchemaEchoingAnExpandedSecret() throws Exception {
         // given
+        var profile = profile();
         String expandedSecret = "resolved-token-password";
         stubAttributes(Resource.TOKEN, token.uuid(), List.of(requestAttribute("stored-token")),
                 List.of(secretAttribute(expandedSecret)));
+        stubAttributes(Resource.TOKEN_PROFILE, profile.uuid(), List.of(), List.of());
         when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitionsWithDefault(expandedSecret));
 
         // when
-        Executable listDefinitions = () -> adapter.listRandomAttributes(token);
+        Executable listDefinitions = () -> adapter.listRandomAttributes(token, profile);
 
         // then
         assertThrows(OutboundSecretLeakException.class, listDefinitions);
@@ -227,6 +250,7 @@ class TokenProviderV2AdapterTest {
     @Test
     void randomData_rejectsInvalidAttributes_beforeCallingConnector() throws Exception {
         // given
+        var profile = profile();
         when(operationsClient.listRandomAttributes(any(), any()))
                 .thenReturn(List.of(dataAttributeDefinition("length-hint", true)));
         RandomDataRequestDto request = new RandomDataRequestDto();
@@ -234,7 +258,7 @@ class TokenProviderV2AdapterTest {
         request.setAttributes(List.of());
 
         // when
-        Executable generate = () -> adapter.randomData(token, request);
+        Executable generate = () -> adapter.randomData(token, profile, request);
 
         // then
         assertThrows(ValidationException.class, generate);

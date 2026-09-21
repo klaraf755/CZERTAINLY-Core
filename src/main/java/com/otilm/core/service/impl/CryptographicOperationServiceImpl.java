@@ -28,12 +28,15 @@ import com.otilm.core.config.TokenContentSigner;
 import com.otilm.core.dao.entity.CryptographicKey;
 import com.otilm.core.dao.entity.CryptographicKeyItem;
 import com.otilm.core.dao.entity.TokenInstanceReference;
+import com.otilm.core.dao.entity.TokenProfile;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
 import com.otilm.core.dao.repository.TokenInstanceReferenceRepository;
+import com.otilm.core.dao.repository.TokenProfileRepository;
 import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
 import com.otilm.core.model.crypto.KeyOperationScope;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
+import com.otilm.core.model.crypto.TokenProfileBasicModel;
 import com.otilm.core.security.authz.AuthorizationEnforcer;
 import com.otilm.core.security.authz.ExternalAuthorization;
 import com.otilm.core.security.authz.SecuredParentUUID;
@@ -99,6 +102,7 @@ public class CryptographicOperationServiceImpl
     // --------------------------------------------------------------------------------
     private CryptographicKeyRepository cryptographicKeyRepository;
     private TokenInstanceReferenceRepository tokenInstanceReferenceRepository;
+    private TokenProfileRepository tokenProfileRepository;
 
     private KeyProviderAdapterFactory keyProviderAdapterFactory;
     private TokenProviderAdapterFactory tokenProviderAdapterFactory;
@@ -118,6 +122,11 @@ public class CryptographicOperationServiceImpl
     @Autowired
     public void setTokenInstanceReferenceRepository(TokenInstanceReferenceRepository tokenInstanceReferenceRepository) {
         this.tokenInstanceReferenceRepository = tokenInstanceReferenceRepository;
+    }
+
+    @Autowired
+    public void setTokenProfileRepository(TokenProfileRepository tokenProfileRepository) {
+        this.tokenProfileRepository = tokenProfileRepository;
     }
 
     @Autowired
@@ -404,7 +413,21 @@ public class CryptographicOperationServiceImpl
             throws ConnectorException, NotFoundException {
         logger.info("Requesting attributes for random generation for token Instance: {}", tokenInstanceUuid);
         TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
-        return tokenProviderAdapterFactory.forToken(token).listRandomAttributes(token);
+        requireLegacyToken(token);
+        return tokenProviderAdapterFactory.forToken(token).listRandomAttributes(token, null);
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.ANY)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<BaseAttribute> listRandomAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid)
+            throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting attributes for random generation for token profile: {}", tokenProfileUuid);
+        TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
+        TokenProfileBasicModel profile = getTokenProfileModel(tokenProfileUuid);
+        requireProfileAssociatedWithToken(token, profile);
+        return tokenProviderAdapterFactory.forToken(token).listRandomAttributes(token, profile);
     }
 
     @Override
@@ -414,14 +437,50 @@ public class CryptographicOperationServiceImpl
             throws ConnectorException, NotFoundException {
         logger.info("Requesting random data generation for token Instance: {}", tokenInstanceUuid);
         TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
+        requireLegacyToken(token);
         logger.atDebug().addArgument(token::toIdentifierString).log("Sending random generation request for token: {}");
-        return tokenProviderAdapterFactory.forToken(token).randomData(token, request);
+        return tokenProviderAdapterFactory.forToken(token).randomData(token, null, request);
+    }
+
+    @Override
+    @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.DETAIL)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public RandomDataResponseDto randomData(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
+            RandomDataRequestDto request) throws ConnectorException, NotFoundException {
+        authorizationEnforcer.enforce(Resource.TOKEN_PROFILE, ResourceAction.DETAIL, tokenProfileUuid);
+        logger.info("Requesting random data generation for token profile: {}", tokenProfileUuid);
+        TokenInstanceBasicModel token = getTokenInstanceModel(tokenInstanceUuid);
+        TokenProfileBasicModel profile = getTokenProfileModel(tokenProfileUuid);
+        requireProfileAssociatedWithToken(token, profile);
+        logger.atDebug().addArgument(token::toIdentifierString).log("Sending random generation request for token: {}");
+        return tokenProviderAdapterFactory.forToken(token).randomData(token, profile, request);
     }
 
     private TokenInstanceBasicModel getTokenInstanceModel(SecuredUUID uuid) throws NotFoundException {
         return tokenInstanceReferenceRepository
                 .findBasicModelByUuid(uuid.getValue())
                 .orElseThrow(() -> new NotFoundException(TokenInstanceReference.class, uuid.getValue()));
+    }
+
+    private TokenProfileBasicModel getTokenProfileModel(SecuredUUID uuid) throws NotFoundException {
+        return tokenProfileRepository
+                .findBasicModelByUuid(uuid.getValue())
+                .orElseThrow(() -> new NotFoundException(TokenProfile.class, uuid.getValue()));
+    }
+
+    private static void requireProfileAssociatedWithToken(TokenInstanceBasicModel token,
+            TokenProfileBasicModel profile) {
+        if (!profile.tokenInstanceReferenceUuid().equals(token.uuid())) {
+            throw new ValidationException(ValidationError.create("Token profile is not associated with the token."));
+        }
+    }
+
+    private static void requireLegacyToken(TokenInstanceBasicModel token) {
+        if (token.connectorInterfaceCode() != null) {
+            throw new ValidationException(ValidationError
+                    .create("Random-data generation on a cryptography provider v2 token requires a token profile; use "
+                            + "the token-profile form of this endpoint."));
+        }
     }
 
     @Override

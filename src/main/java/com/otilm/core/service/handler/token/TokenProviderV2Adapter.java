@@ -122,21 +122,24 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     }
 
     @Override
-    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException {
-        TokenScopedRequestV2Dto request = tokenScopedRequest(tokenInstance);
+    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance,
+            TokenProfileBasicModel tokenProfile) throws ConnectorException {
+        TokenProfileScopedRequestV2Dto request = tokenProfileScopedRequest(tokenProfile);
         List<BaseAttribute> definitions = fetchRandomSchema(request);
         persistAttributeDefinitions(tokenInstance.connectorUuid(), request, definitions, "random-data attributes");
         return definitions;
     }
 
     @Override
-    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
-            throws ConnectorException {
-        TokenScopedRequestV2Dto scope = tokenScopedRequest(tokenInstance);
+    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, TokenProfileBasicModel tokenProfile,
+            RandomDataRequestDto request) throws ConnectorException {
+        TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(tokenProfile);
         List<RequestAttribute> attributes = request.getAttributes() == null ? List.of() : request.getAttributes();
         AttributeDefinitionUtils.validateAttributes(fetchRandomSchema(scope), attributes);
         RandomDataRequestV2Dto body = new RandomDataRequestV2Dto();
         body.setTokenAttributes(scope.getTokenAttributes());
+        body.setTokenProfileAttributes(scope.getTokenProfileAttributes());
+        body.setKeyUsages(scope.getKeyUsages());
         body.setLength(request.getLength());
         body.setOperationAttributes(attributes);
         RandomDataResponseV2Dto connectorResponse = operationsApiClient.randomData(connectorInfo, body);
@@ -145,7 +148,7 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         return response;
     }
 
-    private List<BaseAttribute> fetchRandomSchema(TokenScopedRequestV2Dto request) throws ConnectorException {
+    private List<BaseAttribute> fetchRandomSchema(TokenProfileScopedRequestV2Dto request) throws ConnectorException {
         return requireAttributeList(operationsApiClient.listRandomAttributes(connectorInfo, request), connectorInfo,
                 "random-data attributes");
     }

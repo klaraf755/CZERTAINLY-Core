@@ -17,6 +17,7 @@ import com.otilm.api.model.common.enums.BitMaskEnum;
 import com.otilm.api.model.common.enums.cryptography.KeyAlgorithm;
 import com.otilm.api.model.common.enums.cryptography.KeyType;
 import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
+import com.otilm.api.model.core.auth.Resource;
 import com.otilm.api.model.core.cryptography.key.KeyEvent;
 import com.otilm.api.model.core.cryptography.key.KeyEventStatus;
 import com.otilm.api.model.core.cryptography.key.KeyState;
@@ -24,8 +25,11 @@ import com.otilm.api.model.core.cryptography.key.KeyUsage;
 import com.otilm.core.attribute.RsaEncryptionAttributes;
 import com.otilm.core.dao.repository.CryptographicKeyRepository;
 import com.otilm.core.dao.repository.TokenInstanceReferenceRepository;
+import com.otilm.core.dao.repository.TokenProfileRepository;
+import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.model.crypto.CryptographicKeyItemOperationModel;
 import com.otilm.core.model.crypto.ImmutableTokenInstanceBasicModel;
+import com.otilm.core.model.crypto.ImmutableTokenProfileBasicModel;
 import com.otilm.core.model.crypto.KeyOperationScope;
 import com.otilm.core.model.crypto.RemoteKeyReference;
 import com.otilm.core.model.crypto.TokenInstanceBasicModel;
@@ -86,22 +90,22 @@ class CryptographicOperationServiceImplTest {
     private TokenProviderAdapter tokenAdapter;
     @Mock
     private TokenInstanceReferenceRepository tokenInstanceReferenceRepository;
+    @Mock
+    private TokenProfileRepository tokenProfileRepository;
     @InjectMocks
     private CryptographicOperationServiceImpl service;
 
     @Test
-    void randomData_routesThroughTokenAdapter() throws Exception {
+    void randomData_routesThroughTokenAdapter_forV1Token() throws Exception {
         // given
         UUID tokenUuid = UUID.randomUUID();
-        TokenInstanceBasicModel token = new ImmutableTokenInstanceBasicModel(tokenUuid, "remote", "token",
-                TokenInstanceStatus.ACTIVATED, "SOFT", UUID.randomUUID(), "connector", UUID.randomUUID(),
-                ConnectorInterface.CRYPTOGRAPHY, "v2", 0);
+        TokenInstanceBasicModel token = v1Token(tokenUuid);
         when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
         when(tokenProviderAdapterFactory.forToken(token)).thenReturn(tokenAdapter);
         RandomDataRequestDto request = new RandomDataRequestDto();
         request.setLength(8);
         RandomDataResponseDto expected = new RandomDataResponseDto();
-        when(tokenAdapter.randomData(token, request)).thenReturn(expected);
+        when(tokenAdapter.randomData(token, null, request)).thenReturn(expected);
 
         // when
         RandomDataResponseDto response = service.randomData(SecuredUUID.fromUUID(tokenUuid), request);
@@ -122,6 +126,157 @@ class CryptographicOperationServiceImplTest {
         // then
         assertThrows(NotFoundException.class, generate);
         verifyNoInteractions(tokenProviderAdapterFactory);
+    }
+
+    @Test
+    void randomData_rejectsV2Token_onTokenOnlyForm() {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+
+        // when
+        Executable generate = () -> service.randomData(SecuredUUID.fromUUID(tokenUuid), new RandomDataRequestDto());
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, generate);
+        assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
+                + "token-profile form of this endpoint.", failure.getMessage());
+        verifyNoInteractions(tokenProviderAdapterFactory);
+    }
+
+    @Test
+    void listRandomAttributes_routesThroughTokenAdapter_forV1Token() throws Exception {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v1Token(tokenUuid);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProviderAdapterFactory.forToken(token)).thenReturn(tokenAdapter);
+        List<BaseAttribute> schema = List.of(new DataAttributeV2());
+        when(tokenAdapter.listRandomAttributes(token, null)).thenReturn(schema);
+
+        // when
+        List<BaseAttribute> result = service.listRandomAttributes(SecuredUUID.fromUUID(tokenUuid));
+
+        // then
+        assertSame(schema, result);
+    }
+
+    @Test
+    void listRandomAttributes_rejectsV2Token_onTokenOnlyForm() {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+
+        // when
+        Executable list = () -> service.listRandomAttributes(SecuredUUID.fromUUID(tokenUuid));
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, list);
+        assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
+                + "token-profile form of this endpoint.", failure.getMessage());
+        verifyNoInteractions(tokenProviderAdapterFactory);
+    }
+
+    @Test
+    void listRandomAttributes_routesThroughTokenAdapter_forTokenProfile() throws Exception {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        ImmutableTokenProfileBasicModel profile = profileFor(token);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProfileRepository.findBasicModelByUuid(profile.uuid())).thenReturn(Optional.of(profile));
+        when(tokenProviderAdapterFactory.forToken(token)).thenReturn(tokenAdapter);
+        List<BaseAttribute> schema = List.of(new DataAttributeV2());
+        when(tokenAdapter.listRandomAttributes(token, profile)).thenReturn(schema);
+
+        // when
+        List<BaseAttribute> result = service
+                .listRandomAttributes(SecuredParentUUID.fromUUID(tokenUuid), SecuredUUID.fromUUID(profile.uuid()));
+
+        // then
+        assertSame(schema, result);
+        verify(authorizationEnforcer)
+                .enforce(eq(Resource.TOKEN_PROFILE), eq(ResourceAction.DETAIL), any(SecuredUUID.class));
+    }
+
+    @Test
+    void listRandomAttributes_rejectsProfile_whenNotAssociatedWithToken() {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        ImmutableTokenProfileBasicModel profile = profileFor(v2Token(UUID.randomUUID()));
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProfileRepository.findBasicModelByUuid(profile.uuid())).thenReturn(Optional.of(profile));
+
+        // when
+        Executable list = () -> service
+                .listRandomAttributes(SecuredParentUUID.fromUUID(tokenUuid), SecuredUUID.fromUUID(profile.uuid()));
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, list);
+        assertEquals("Token profile is not associated with the token.", failure.getMessage());
+        verifyNoInteractions(tokenProviderAdapterFactory);
+    }
+
+    @Test
+    void randomData_routesThroughTokenAdapter_forTokenProfile() throws Exception {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        ImmutableTokenProfileBasicModel profile = profileFor(token);
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProfileRepository.findBasicModelByUuid(profile.uuid())).thenReturn(Optional.of(profile));
+        when(tokenProviderAdapterFactory.forToken(token)).thenReturn(tokenAdapter);
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(8);
+        RandomDataResponseDto expected = new RandomDataResponseDto();
+        when(tokenAdapter.randomData(token, profile, request)).thenReturn(expected);
+
+        // when
+        RandomDataResponseDto response = service
+                .randomData(SecuredParentUUID.fromUUID(tokenUuid), SecuredUUID.fromUUID(profile.uuid()), request);
+
+        // then
+        assertSame(expected, response);
+        verify(authorizationEnforcer)
+                .enforce(eq(Resource.TOKEN_PROFILE), eq(ResourceAction.DETAIL), any(SecuredUUID.class));
+    }
+
+    @Test
+    void randomData_rejectsProfile_whenNotAssociatedWithToken() {
+        // given
+        UUID tokenUuid = UUID.randomUUID();
+        TokenInstanceBasicModel token = v2Token(tokenUuid);
+        ImmutableTokenProfileBasicModel profile = profileFor(v2Token(UUID.randomUUID()));
+        when(tokenInstanceReferenceRepository.findBasicModelByUuid(tokenUuid)).thenReturn(Optional.of(token));
+        when(tokenProfileRepository.findBasicModelByUuid(profile.uuid())).thenReturn(Optional.of(profile));
+
+        // when
+        Executable generate = () -> service
+                .randomData(SecuredParentUUID.fromUUID(tokenUuid), SecuredUUID.fromUUID(profile.uuid()),
+                        new RandomDataRequestDto());
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, generate);
+        assertEquals("Token profile is not associated with the token.", failure.getMessage());
+        verifyNoInteractions(tokenProviderAdapterFactory);
+    }
+
+    private static TokenInstanceBasicModel v1Token(UUID tokenUuid) {
+        return new ImmutableTokenInstanceBasicModel(tokenUuid, "remote", "token", TokenInstanceStatus.ACTIVATED, "SOFT",
+                UUID.randomUUID(), "connector", null, null, null, 0);
+    }
+
+    private static TokenInstanceBasicModel v2Token(UUID tokenUuid) {
+        return new ImmutableTokenInstanceBasicModel(tokenUuid, "remote", "token", TokenInstanceStatus.ACTIVATED, "SOFT",
+                UUID.randomUUID(), "connector", UUID.randomUUID(), ConnectorInterface.CRYPTOGRAPHY, "v2", 0);
+    }
+
+    private static ImmutableTokenProfileBasicModel profileFor(TokenInstanceBasicModel token) {
+        return new ImmutableTokenProfileBasicModel(UUID.randomUUID(), "profile", null, token.name(), token.uuid(), true,
+                List.of(KeyUsage.SIGN));
     }
 
     @Test

@@ -141,13 +141,14 @@ public class TokenProviderV1Adapter
     }
 
     @Override
-    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance) throws ConnectorException {
+    public List<BaseAttribute> listRandomAttributes(TokenInstanceBasicModel tokenInstance,
+            TokenProfileBasicModel tokenProfile) throws ConnectorException {
         return operationsApiClient.listRandomAttributes(connectorInfo, tokenInstance.tokenInstanceUuid());
     }
 
     @Override
-    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, RandomDataRequestDto request)
-            throws ConnectorException {
+    public RandomDataResponseDto randomData(TokenInstanceBasicModel tokenInstance, TokenProfileBasicModel tokenProfile,
+            RandomDataRequestDto request) throws ConnectorException {
         var connectorRequest = LegacyOperationCodec.randomRequest(request.getLength(), request.getAttributes());
         var connectorResponse = operationsApiClient
                 .randomData(connectorInfo, tokenInstance.tokenInstanceUuid(), connectorRequest);

@@ -329,7 +329,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
     }
 
     @Test
-    void randomData_sendsTokenScope_andReturnsBase64() throws Exception {
+    void randomData_sendsTokenProfileScope_andReturnsBase64() throws Exception {
         // given
         String randomBytes = Base64.getEncoder().encodeToString(new byte[]{4, 4, 4, 4});
         connectorMock
@@ -340,13 +340,34 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         request.setAttributes(List.of());
 
         // when
-        RandomDataResponseDto response = operationService.randomData(token.getSecuredUuid(), request);
+        RandomDataResponseDto response = operationService
+                .randomData(token.getSecuredParentUuid(), profile.getSecuredUuid(), request);
 
         // then
         assertEquals(randomBytes, response.getData());
         connectorMock
                 .verifyOperationRequestContaining("random",
-                        "{\"tokenAttributes\":[{\"name\":\"token-slot\"}],\"length\":4,\"operationAttributes\":[]}");
+                        "{\"tokenAttributes\":[{\"name\":\"token-slot\"}],"
+                                + "\"tokenProfileAttributes\":[{\"name\":\"profile-policy\"}],"
+                                + "\"keyUsages\":[\"sign\",\"verify\",\"encrypt\",\"decrypt\"],"
+                                + "\"length\":4,\"operationAttributes\":[]}");
+    }
+
+    @Test
+    void randomData_rejectsTokenOnlyForm_forV2Token() {
+        // given
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(4);
+        request.setAttributes(List.of());
+
+        // when
+        Executable generate = () -> operationService.randomData(token.getSecuredUuid(), request);
+
+        // then
+        ValidationException failure = assertThrows(ValidationException.class, generate);
+        assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
+                + "token-profile form of this endpoint.", failure.getMessage());
+        connectorMock.verifyNoOperationRequest("random");
     }
 
     @Test

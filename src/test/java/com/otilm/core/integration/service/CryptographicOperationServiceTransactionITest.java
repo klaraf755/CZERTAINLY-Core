@@ -143,7 +143,7 @@ class CryptographicOperationServiceTransactionITest extends BaseSpringBootTest {
         AtomicBoolean transactionActive = new AtomicBoolean(true);
         TokenProviderAdapter adapter = mock(TokenProviderAdapter.class);
         when(tokenProviderAdapterFactory.forToken(any(TokenInstanceBasicModel.class))).thenReturn(adapter);
-        when(adapter.randomData(any(), any())).thenAnswer(invocation -> {
+        when(adapter.randomData(any(), any(), any())).thenAnswer(invocation -> {
             transactionActive.set(TransactionSynchronizationManager.isActualTransactionActive());
             return new RandomDataResponseDto();
         });
