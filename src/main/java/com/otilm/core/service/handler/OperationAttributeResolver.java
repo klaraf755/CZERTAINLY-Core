@@ -3,7 +3,6 @@ package com.otilm.core.service.handler;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.NotFoundException;
-import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.common.attribute.common.content.AttributeContentType;
 import com.otilm.core.attribute.engine.ConnectorRequestAttributesBuilder;
@@ -56,10 +55,11 @@ public class OperationAttributeResolver {
         return authHelper.runAsSystem(AuthHelper.ATTRIBUTE_CONTENT_RESOLVER_USERNAME, () -> {
             try {
                 return connectorRequestAttributesBuilder.dereferenceForConnectorRequest(connectorUuid, stored);
-            } catch (AttributeException | NotFoundException | ValidationException e) {
-                // A stored reference may be unresolvable, or point at a disabled/invalid-state secret or vault profile
-                // (unchecked ValidationException). Surface all through the declared ConnectorException contract so the
-                // operation fails cleanly instead of escaping as a raw RuntimeException.
+            } catch (AttributeException | NotFoundException e) {
+                // A stored reference may be unresolvable. Surface that through the declared ConnectorException
+                // contract so the operation fails cleanly. ValidationException is deliberately left uncaught: a
+                // disabled or invalid-state secret or vault profile names the object the operator has to fix and
+                // renders as 422, which wrapping would turn into a 500 carrying no message at all.
                 throw new ConnectorException(
                         "Unable to resolve stored attribute references for connector request (connector "
                                 + connectorUuid + ")",
