@@ -3,6 +3,7 @@ package com.otilm.core.service.impl;
 import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.NotFoundException;
+import com.otilm.api.exception.NotSupportedException;
 import com.otilm.api.exception.ValidationError;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttribute;
@@ -257,8 +258,8 @@ public class CryptographicOperationServiceImpl
 
     private static void requireLegacyProvider(CryptographicKeyItemOperationModel key) {
         if (key.hasConnectorInterface()) {
-            throw new ValidationException(ValidationError
-                    .create("Legacy attribute listing is not available for keys on a cryptography provider v2; use the per-operation attribute endpoints."));
+            throw new NotSupportedException(
+                    "Legacy attribute listing is not available for keys on a cryptography provider v2; use the per-operation attribute endpoints.");
         }
     }
 
@@ -477,9 +478,9 @@ public class CryptographicOperationServiceImpl
 
     private static void requireLegacyToken(TokenInstanceBasicModel token) {
         if (token.connectorInterfaceCode() != null) {
-            throw new ValidationException(ValidationError
-                    .create("Random-data generation on a cryptography provider v2 token requires a token profile; use "
-                            + "the token-profile form of this endpoint."));
+            throw new NotSupportedException(
+                    "Random-data generation on a cryptography provider v2 token requires a token profile; use the "
+                            + "token-profile form of this endpoint.");
         }
     }
 

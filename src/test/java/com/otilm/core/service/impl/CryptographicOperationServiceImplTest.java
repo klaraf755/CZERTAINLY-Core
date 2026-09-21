@@ -2,6 +2,7 @@ package com.otilm.core.service.impl;
 
 import com.otilm.api.exception.ConnectorException;
 import com.otilm.api.exception.NotFoundException;
+import com.otilm.api.exception.NotSupportedException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.api.model.client.cryptography.operations.CipherDataRequestDto;
@@ -139,7 +140,7 @@ class CryptographicOperationServiceImplTest {
         Executable generate = () -> service.randomData(SecuredUUID.fromUUID(tokenUuid), new RandomDataRequestDto());
 
         // then
-        ValidationException failure = assertThrows(ValidationException.class, generate);
+        NotSupportedException failure = assertThrows(NotSupportedException.class, generate);
         assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
                 + "token-profile form of this endpoint.", failure.getMessage());
         verifyNoInteractions(tokenProviderAdapterFactory);
@@ -173,7 +174,7 @@ class CryptographicOperationServiceImplTest {
         Executable list = () -> service.listRandomAttributes(SecuredUUID.fromUUID(tokenUuid));
 
         // then
-        ValidationException failure = assertThrows(ValidationException.class, list);
+        NotSupportedException failure = assertThrows(NotSupportedException.class, list);
         assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
                 + "token-profile form of this endpoint.", failure.getMessage());
         verifyNoInteractions(tokenProviderAdapterFactory);
@@ -515,7 +516,7 @@ class CryptographicOperationServiceImplTest {
                         SecuredUUID.fromUUID(UUID.randomUUID()), key.keyUuid(), key.keyItemUuid(), KeyAlgorithm.RSA);
 
         // then
-        ValidationException failure = assertThrows(ValidationException.class, list);
+        NotSupportedException failure = assertThrows(NotSupportedException.class, list);
         assertTrue(failure.getMessage().contains("per-operation attribute endpoints"));
         verifyNoInteractions(keyProviderAdapterFactory);
     }

@@ -1,6 +1,7 @@
 package com.otilm.core.integration.service;
 
 import com.otilm.api.exception.ConnectorException;
+import com.otilm.api.exception.NotSupportedException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttributeV3;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
@@ -310,7 +311,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
                         privateKey.getUuid(), KeyAlgorithm.RSA);
 
         // then
-        assertThrows(ValidationException.class, list);
+        assertThrows(NotSupportedException.class, list);
     }
 
     @Test
@@ -364,7 +365,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
         Executable generate = () -> operationService.randomData(token.getSecuredUuid(), request);
 
         // then
-        ValidationException failure = assertThrows(ValidationException.class, generate);
+        NotSupportedException failure = assertThrows(NotSupportedException.class, generate);
         assertEquals("Random-data generation on a cryptography provider v2 token requires a token profile; use the "
                 + "token-profile form of this endpoint.", failure.getMessage());
         connectorMock.verifyNoOperationRequest("random");
