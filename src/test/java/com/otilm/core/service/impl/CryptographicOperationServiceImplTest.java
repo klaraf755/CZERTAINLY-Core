@@ -49,9 +49,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -485,23 +489,53 @@ class CryptographicOperationServiceImplTest {
         verifyNoInteractions(keyProviderAdapterFactory);
     }
 
-    @Test
-    void listSignAttributes_delegatesToAdapter() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("operationAttributeListings")
+    void listOperationAttributes_delegatesToItsOwnAdapterCall(String operation, AdapterListing adapterListing,
+            ServiceListing serviceListing) throws Exception {
         // given
         CryptographicKeyItemOperationModel key = legacyKey();
         when(keyService.getKeyItemModel(key.keyItemUuid())).thenReturn(key);
         when(keyProviderAdapterFactory.forKeyItem(key)).thenReturn(adapter);
         List<BaseAttribute> schema = List.of(new DataAttributeV2());
-        when(adapter.listSignAttributes(any())).thenReturn(schema);
+        when(adapterListing.list(adapter)).thenReturn(schema);
 
         // when
-        List<BaseAttribute> result = service
-                .listSignAttributes(SecuredParentUUID.fromUUID(key.tokenInstanceUuid()),
+        List<BaseAttribute> result = serviceListing
+                .list(service, SecuredParentUUID.fromUUID(key.tokenInstanceUuid()),
                         SecuredUUID.fromUUID(UUID.randomUUID()), UUID.randomUUID(), key.keyItemUuid());
 
         // then
         assertSame(schema, result);
         verifyNoInteractions(eventHistoryService);
+    }
+
+    private static Stream<Arguments> operationAttributeListings() {
+        return Stream
+                .of(Arguments
+                        .of("encrypt", (AdapterListing) listing -> listing.listEncryptAttributes(any()),
+                                (ServiceListing) CryptographicOperationServiceImpl::listEncryptAttributes),
+                        Arguments
+                                .of("decrypt", (AdapterListing) listing -> listing.listDecryptAttributes(any()),
+                                        (ServiceListing) CryptographicOperationServiceImpl::listDecryptAttributes),
+                        Arguments
+                                .of("sign", (AdapterListing) listing -> listing.listSignAttributes(any()),
+                                        (ServiceListing) CryptographicOperationServiceImpl::listSignAttributes),
+                        Arguments
+                                .of("verify", (AdapterListing) listing -> listing.listVerifyAttributes(any()),
+                                        (ServiceListing) CryptographicOperationServiceImpl::listVerifyAttributes));
+    }
+
+    @FunctionalInterface
+    interface AdapterListing {
+        List<BaseAttribute> list(KeyProviderAdapter adapter) throws ConnectorException;
+    }
+
+    @FunctionalInterface
+    interface ServiceListing {
+        List<BaseAttribute> list(CryptographicOperationServiceImpl service, SecuredParentUUID tokenInstanceUuid,
+                SecuredUUID tokenProfileUuid, UUID keyUuid, UUID keyItemUuid)
+                throws ConnectorException, NotFoundException;
     }
 
     @Test

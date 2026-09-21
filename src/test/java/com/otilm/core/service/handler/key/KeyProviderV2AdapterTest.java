@@ -86,6 +86,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.ResponseEntity;
@@ -398,7 +399,7 @@ class KeyProviderV2AdapterTest {
         Executable sign = () -> adapter.signData(v2Context(List.of()), request);
 
         // then
-        assertThrows(IllegalArgumentException.class, sign);
+        assertThrows(ValidationException.class, sign);
         verifyNoInteractions(operationsClient);
     }
 
@@ -595,18 +596,114 @@ class KeyProviderV2AdapterTest {
         assertEquals(Base64.getEncoder().encodeToString(new byte[]{9}), response.getDecryptedData().get(0).getData());
     }
 
-    @Test
-    void listSignAttributes_persistsDefinitions_andGuardsExpandedSecrets() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("operationAttributeListings")
+    void listOperationAttributes_persistsDefinitionsFromItsOwnConnectorEndpoint(String operation,
+            ClientListing clientListing, AdapterListing adapterListing) throws Exception {
         // given
         List<BaseAttribute> schema = List.of(new DataAttributeV2());
-        when(operationsClient.listSignAttributes(any(), any())).thenReturn(schema);
+        when(clientListing.list(operationsClient)).thenReturn(schema);
 
         // when
-        List<BaseAttribute> result = adapter.listSignAttributes(v2Context(metadata("handle")));
+        List<BaseAttribute> result = adapterListing.list(adapter, v2Context(metadata("handle")));
 
         // then
         assertSame(schema, result);
         verify(attributes).updateDataAttributeDefinitions(profile.connectorUuid(), null, schema);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Resource.class, names = {"TOKEN", "TOKEN_PROFILE"})
+    void listSignAttributes_rejectsSchemaEchoingAnExpandedSecret(Resource secretScope) throws Exception {
+        // given
+        String expandedSecret = "resolved-provider-password";
+        stubExpandedSecret(secretScope, expandedSecret);
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(definitionsWithDefault(expandedSecret));
+
+        // when
+        Executable listDefinitions = () -> adapter.listSignAttributes(v2Context(metadata("handle")));
+
+        // then
+        assertThrows(OutboundSecretLeakException.class, listDefinitions);
+    }
+
+    @Test
+    void signData_rejectsOperationSchemaEchoingAnExpandedSecret() throws Exception {
+        // given
+        String expandedSecret = "resolved-provider-password";
+        stubExpandedSecret(Resource.TOKEN, expandedSecret);
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(definitionsWithDefault(expandedSecret));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", null)));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(OutboundSecretLeakException.class, sign);
+        verify(operationsClient, never()).signData(any(), any());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    void signData_rejectsItemWithoutData_beforeCallingConnector(String data) throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem(data, null)));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(ValidationException.class, sign);
+        verify(operationsClient, never()).signData(any(), any());
+    }
+
+    @Test
+    void signData_rejectsSignatureWithoutData() throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataResponseV2Dto body = new SignDataResponseV2Dto();
+        body.setSignatures(List.of(new SignatureDataV2Dto(new byte[0], "0")));
+        when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", null)));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(ConnectorException.class, sign);
+    }
+
+    private static Stream<Arguments> operationAttributeListings() {
+        return Stream
+                .of(Arguments
+                        .of("encrypt", (ClientListing) client -> client.listEncryptAttributes(any(), any()),
+                                (AdapterListing) KeyProviderV2Adapter::listEncryptAttributes),
+                        Arguments
+                                .of("decrypt", (ClientListing) client -> client.listDecryptAttributes(any(), any()),
+                                        (AdapterListing) KeyProviderV2Adapter::listDecryptAttributes),
+                        Arguments
+                                .of("sign", (ClientListing) client -> client.listSignAttributes(any(), any()),
+                                        (AdapterListing) KeyProviderV2Adapter::listSignAttributes),
+                        Arguments
+                                .of("verify", (ClientListing) client -> client.listVerifyAttributes(any(), any()),
+                                        (AdapterListing) KeyProviderV2Adapter::listVerifyAttributes));
+    }
+
+    @FunctionalInterface
+    interface ClientListing {
+        List<BaseAttribute> list(CryptographicOperationsSyncApiClient client) throws ConnectorException;
+    }
+
+    @FunctionalInterface
+    interface AdapterListing {
+        List<BaseAttribute> list(KeyProviderV2Adapter adapter, OperationKeyContext context) throws ConnectorException;
     }
 
     private static DataAttributeV2 dataAttributeDefinition(String name, boolean required) {

@@ -389,10 +389,7 @@ public class CryptographicOperationServiceImpl
     }
 
     private static void requireActive(CryptographicKeyItemOperationModel key) {
-        if (key.keyState() != KeyState.ACTIVE || !key.enabled()) {
-            throw new ValidationException(
-                    ValidationError.create("Key needs to be " + KeyState.ACTIVE.getLabel() + " and enabled."));
-        }
+        verifyActive(key.keyState(), key.enabled());
     }
 
     private static void requireUsage(CryptographicKeyItemOperationModel key, KeyUsage usage, String operation) {
@@ -419,7 +416,8 @@ public class CryptographicOperationServiceImpl
     }
 
     @Override
-    @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.ANY)
+    @ExternalAuthorization(resource = Resource.TOKEN_PROFILE, action = ResourceAction.DETAIL,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public List<BaseAttribute> listRandomAttributes(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid)
             throws ConnectorException, NotFoundException {
@@ -444,7 +442,8 @@ public class CryptographicOperationServiceImpl
     }
 
     @Override
-    @ExternalAuthorization(resource = Resource.TOKEN, action = ResourceAction.DETAIL)
+    @ExternalAuthorization(resource = Resource.TOKEN_PROFILE, action = ResourceAction.DETAIL,
+            parentResource = Resource.TOKEN, parentAction = ResourceAction.DETAIL)
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public RandomDataResponseDto randomData(SecuredParentUUID tokenInstanceUuid, SecuredUUID tokenProfileUuid,
             RandomDataRequestDto request) throws ConnectorException, NotFoundException {

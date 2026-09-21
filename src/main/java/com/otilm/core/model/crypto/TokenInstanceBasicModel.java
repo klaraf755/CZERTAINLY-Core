@@ -26,6 +26,6 @@ public interface TokenInstanceBasicModel extends NamedModel {
     long tokenProfileCount();
 
     default int providerInterfaceVersion() {
-        return connectorInterfaceUuid() == null ? 1 : 2;
+        return connectorInterfaceCode() == null ? 1 : 2;
     }
 }

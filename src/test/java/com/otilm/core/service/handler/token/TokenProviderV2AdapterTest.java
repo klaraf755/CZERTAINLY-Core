@@ -248,6 +248,44 @@ class TokenProviderV2AdapterTest {
     }
 
     @Test
+    void randomData_rejectsSchemaEchoingAnExpandedSecret_beforeCallingConnector() throws Exception {
+        // given
+        var profile = profile();
+        String expandedSecret = "resolved-token-password";
+        stubAttributes(Resource.TOKEN, token.uuid(), List.of(requestAttribute("stored-token")),
+                List.of(secretAttribute(expandedSecret)));
+        stubAttributes(Resource.TOKEN_PROFILE, profile.uuid(), List.of(), List.of());
+        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(definitionsWithDefault(expandedSecret));
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(2);
+        request.setAttributes(List.of());
+
+        // when
+        Executable generate = () -> adapter.randomData(token, profile, request);
+
+        // then
+        assertThrows(OutboundSecretLeakException.class, generate);
+        verify(operationsClient, never()).randomData(any(), any());
+    }
+
+    @Test
+    void randomData_rejectsResponseWithoutData() throws Exception {
+        // given
+        var profile = profile();
+        when(operationsClient.listRandomAttributes(any(), any())).thenReturn(List.of());
+        when(operationsClient.randomData(any(), any())).thenReturn(new RandomDataResponseV2Dto());
+        RandomDataRequestDto request = new RandomDataRequestDto();
+        request.setLength(2);
+        request.setAttributes(List.of());
+
+        // when
+        Executable generate = () -> adapter.randomData(token, profile, request);
+
+        // then
+        assertThrows(ConnectorException.class, generate);
+    }
+
+    @Test
     void randomData_rejectsInvalidAttributes_beforeCallingConnector() throws Exception {
         // given
         var profile = profile();

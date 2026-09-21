@@ -29,7 +29,11 @@ import com.otilm.core.service.handler.key.KeyProviderAdapter;
 import com.otilm.core.service.handler.key.KeyProviderAdapterFactory;
 import com.otilm.core.service.handler.token.TokenProviderAdapter;
 import com.otilm.core.service.handler.token.TokenProviderAdapterFactory;
+import com.otilm.core.service.impl.CryptographicOperationServiceImpl;
 import com.otilm.core.util.BaseSpringBootTest;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,9 +42,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -156,5 +163,31 @@ class CryptographicOperationServiceTransactionITest extends BaseSpringBootTest {
 
         // then
         assertFalse(transactionActive.get());
+    }
+
+    @Test
+    void everyServiceOperation_declaresThatItSuspendsTheTransaction() {
+        // when
+        List<String> missing = Arrays
+                .stream(CryptographicOperationServiceImpl.class.getDeclaredMethods())
+                .filter(method -> Modifier.isPublic(method.getModifiers()) && !method.isSynthetic())
+                .filter(CryptographicOperationServiceTransactionITest::isServiceOperation)
+                .filter(method -> !suspendsTransaction(method))
+                .map(Method::toString)
+                .toList();
+
+        // then
+        assertTrue(missing.isEmpty(), "Methods without @Transactional(NOT_SUPPORTED): " + missing);
+    }
+
+    /** Setters are wiring, and the algorithm-only signature listing answers from a core table. */
+    private static boolean isServiceOperation(Method method) {
+        return !method.getName().startsWith("set")
+                && !("listSignatureAttributes".equals(method.getName()) && method.getParameterCount() == 1);
+    }
+
+    private static boolean suspendsTransaction(Method method) {
+        Transactional transactional = method.getAnnotation(Transactional.class);
+        return transactional != null && transactional.propagation() == Propagation.NOT_SUPPORTED;
     }
 }

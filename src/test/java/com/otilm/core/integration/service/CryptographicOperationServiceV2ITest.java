@@ -257,32 +257,47 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
     }
 
     @Test
-    void encryptAndDecrypt_roundTripThroughConnector() throws Exception {
+    void encryptData_returnsConnectorPayload_andRecordsSuccess() throws Exception {
         // given
         connectorMock
                 .stubOperationAttributes("encrypt", "[]")
-                .stubOperation("encrypt", "{\"encryptedData\":[{\"identifier\":\"0\",\"data\":\"" + SIGNATURE + "\"}]}")
+                .stubOperation("encrypt",
+                        "{\"encryptedData\":[{\"identifier\":\"0\",\"data\":\"" + SIGNATURE + "\"}]}");
+
+        // when
+        EncryptDataResponseDto encrypted = operationService
+                .encryptData(token.getSecuredParentUuid(), profile.getSecuredUuid(), key.getUuid(),
+                        privateKey.getUuid(), cipherRequest());
+
+        // then
+        assertEquals(SIGNATURE, encrypted.getEncryptedData().get(0).getData());
+        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.ENCRYPT).getStatus());
+    }
+
+    @Test
+    void decryptData_returnsConnectorPayload_andRecordsSuccess() throws Exception {
+        // given
+        connectorMock
                 .stubOperationAttributes("decrypt", "[]")
                 .stubOperation("decrypt", "{\"decryptedData\":[{\"identifier\":\"0\",\"data\":\"" + DATA + "\"}]}");
+
+        // when
+        DecryptDataResponseDto decrypted = operationService
+                .decryptData(token.getSecuredParentUuid(), profile.getSecuredUuid(), key.getUuid(),
+                        privateKey.getUuid(), cipherRequest());
+
+        // then
+        assertEquals(DATA, decrypted.getDecryptedData().get(0).getData());
+        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.DECRYPT).getStatus());
+    }
+
+    private static CipherDataRequestDto cipherRequest() {
         CipherDataRequestDto request = new CipherDataRequestDto();
         request.setCipherAttributes(List.of());
         CipherRequestData item = new CipherRequestData();
         item.setData(DATA);
         request.setCipherData(List.of(item));
-
-        // when
-        EncryptDataResponseDto encrypted = operationService
-                .encryptData(token.getSecuredParentUuid(), profile.getSecuredUuid(), key.getUuid(),
-                        privateKey.getUuid(), request);
-        DecryptDataResponseDto decrypted = operationService
-                .decryptData(token.getSecuredParentUuid(), profile.getSecuredUuid(), key.getUuid(),
-                        privateKey.getUuid(), request);
-
-        // then
-        assertEquals(SIGNATURE, encrypted.getEncryptedData().get(0).getData());
-        assertEquals(DATA, decrypted.getDecryptedData().get(0).getData());
-        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.ENCRYPT).getStatus());
-        assertEquals(KeyEventStatus.SUCCESS, onlyEvent(KeyEvent.DECRYPT).getStatus());
+        return request;
     }
 
     @Test

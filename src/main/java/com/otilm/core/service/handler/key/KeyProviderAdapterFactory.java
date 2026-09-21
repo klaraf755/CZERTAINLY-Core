@@ -1,5 +1,6 @@
 package com.otilm.core.service.handler.key;
 
+import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.core.attribute.engine.AttributeEngine;
@@ -63,8 +64,9 @@ public class KeyProviderAdapterFactory {
         if (keyItem.connectorUuid() == null) {
             throw new NotFoundException(Connector.class, keyItem.keyItemUuid());
         }
-        ImmutableConnectorFullModel connector = connectorInternalService
-                .getConnectorFullModelForApiClient(keyItem.connectorUuid());
+        // The cached single-row lookup: routing comes from the item's own interface columns, so the
+        // connector's interfaces and function groups are not needed here.
+        ApiClientConnectorInfo connector = connectorInternalService.getConnectorForApiClient(keyItem.connectorUuid());
         if (!keyItem.hasConnectorInterface()) {
             return new KeyProviderV1Adapter(connectorApiFactory, connector, attributeEngine);
         }
@@ -77,8 +79,8 @@ public class KeyProviderAdapterFactory {
         return forInterface(iface.code(), iface.version(), connector, owner);
     }
 
-    private KeyProviderAdapter forInterface(ConnectorInterface code, String version,
-            ImmutableConnectorFullModel connector, String owner) {
+    private KeyProviderAdapter forInterface(ConnectorInterface code, String version, ApiClientConnectorInfo connector,
+            String owner) {
         if (code != ConnectorInterface.CRYPTOGRAPHY) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Key provider is associated with a non-cryptography connector interface (" + owner + ")");

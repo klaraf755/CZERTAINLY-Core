@@ -10,11 +10,14 @@ import com.otilm.api.model.connector.cryptography.operations.data.CipherResponse
 import com.otilm.api.model.connector.cryptography.operations.data.SignatureRequestData;
 import com.otilm.api.model.connector.cryptography.operations.data.SignatureResponseData;
 import com.otilm.api.model.connector.cryptography.operations.data.VerificationResponseData;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 
-/** Builds connector-side v1 operation requests; the only file that names those DTOs. */
+/**
+ * Builds connector-side v1 operation requests. On the cryptographic-operation path this is the only file that names
+ * those DTOs; the signing engine still builds them directly in {@code PlatformSignatureService},
+ * {@code PlatformCipherService} and {@code TokenContentSigner}.
+ */
 public final class LegacyOperationCodec {
 
     private LegacyOperationCodec() {
@@ -91,7 +94,7 @@ public final class LegacyOperationCodec {
     }
 
     private static byte[] decode(String base64) {
-        return base64 == null ? null : Base64.getDecoder().decode(base64.getBytes(StandardCharsets.UTF_8));
+        return base64 == null ? null : Base64.getDecoder().decode(base64);
     }
 
     private static String encode(byte[] bytes) {

@@ -135,7 +135,9 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
             RandomDataRequestDto request) throws ConnectorException {
         TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(tokenProfile);
         List<RequestAttribute> attributes = request.getAttributes() == null ? List.of() : request.getAttributes();
-        AttributeDefinitionUtils.validateAttributes(fetchRandomSchema(scope), attributes);
+        List<BaseAttribute> definitions = fetchRandomSchema(scope);
+        assertNoExpandedSecretEchoed(scope, definitions);
+        AttributeDefinitionUtils.validateAttributes(definitions, attributes);
         RandomDataRequestV2Dto body = new RandomDataRequestV2Dto();
         body.setTokenAttributes(scope.getTokenAttributes());
         body.setTokenProfileAttributes(scope.getTokenProfileAttributes());
@@ -143,6 +145,10 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         body.setLength(request.getLength());
         body.setOperationAttributes(attributes);
         RandomDataResponseV2Dto connectorResponse = operationsApiClient.randomData(connectorInfo, body);
+        if (connectorResponse == null || connectorResponse.getData() == null
+                || connectorResponse.getData().length == 0) {
+            throw new ConnectorException("Connector returned no random data", connectorInfo);
+        }
         RandomDataResponseDto response = new RandomDataResponseDto();
         response.setData(Base64.getEncoder().encodeToString(connectorResponse.getData()));
         return response;
@@ -198,12 +204,12 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
     }
 
     /**
-     * Guards the connector's schema against an echo of a secret the matching request expanded, then persists it.
+     * Refuses a schema that echoes back a secret the matching request expanded for the connector.
      *
      * @param sentRequest the request whose resolved attributes went out, or null when the call sent none
      */
-    private void persistAttributeDefinitions(UUID connectorUuid, @Nullable TokenScopedRequestV2Dto sentRequest,
-            List<BaseAttribute> definitions, String operation) throws ConnectorException {
+    private void assertNoExpandedSecretEchoed(@Nullable TokenScopedRequestV2Dto sentRequest,
+            List<BaseAttribute> definitions) {
         Set<String> expandedSecrets = new HashSet<>();
         if (sentRequest != null) {
             outboundSecretContainment
@@ -214,6 +220,12 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
             }
         }
         outboundSecretContainment.assertNoExpandedSecretOutbound(definitions, expandedSecrets);
+    }
+
+    /** Guards the connector's schema against an echoed secret, then persists it. */
+    private void persistAttributeDefinitions(UUID connectorUuid, @Nullable TokenScopedRequestV2Dto sentRequest,
+            List<BaseAttribute> definitions, String operation) throws ConnectorException {
+        assertNoExpandedSecretEchoed(sentRequest, definitions);
         try {
             attributeEngine.updateDataAttributeDefinitions(connectorUuid, null, definitions);
         } catch (AttributeException e) {

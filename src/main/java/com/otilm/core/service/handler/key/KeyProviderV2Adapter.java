@@ -313,8 +313,8 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         List<SignatureResponseData> signatures = new ArrayList<>(responseBody.getSignatures().size());
         for (SignatureDataV2Dto item : responseBody.getSignatures()) {
             SignatureResponseData data = new SignatureResponseData();
-            data.setData(Base64.getEncoder().encodeToString(item.getData()));
-            data.setIdentifier(batch.callerIdentifier(item.getIdentifier()));
+            data.setData(encodeRequired(item.getData()));
+            data.setIdentifier(batch.callerIdentifier(item.getIdentifier(), connectorInfo));
             signatures.add(data);
         }
         SignDataResponseDto result = new SignDataResponseDto();
@@ -343,7 +343,7 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         for (VerificationResponseItemV2Dto item : response.getVerifications()) {
             VerificationResponseData verification = new VerificationResponseData();
             verification.setResult(Boolean.TRUE.equals(item.getResult()));
-            verification.setIdentifier(data.callerIdentifier(item.getIdentifier()));
+            verification.setIdentifier(data.callerIdentifier(item.getIdentifier(), connectorInfo));
             verification.setDetails(item.getDetails());
             verifications.add(verification);
         }
@@ -389,7 +389,8 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
                 .keyItem()
                 .reference() instanceof RemoteKeyReference.MetadataReference(List<MetadataAttribute> keyMeta))
                 || keyMeta == null || keyMeta.isEmpty()) {
-            throw new IllegalArgumentException("V2 cryptographic operations require a non-empty metadata handle.");
+            throw new ValidationException(
+                    ValidationError.create("V2 cryptographic operations require a non-empty metadata handle."));
         }
         request.setTokenAttributes(scope.getTokenAttributes());
         request.setTokenProfileAttributes(scope.getTokenProfileAttributes());
@@ -407,14 +408,19 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return definitions;
     }
 
-    /** Guards expanded secrets and persists the schema so attribute callbacks can resolve against it. */
-    private List<BaseAttribute> publishDefinitions(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions)
-            throws ConnectorException {
+    /** Refuses a schema that echoes back a secret the request expanded for the connector. */
+    private void assertNoExpandedSecretEchoed(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions) {
         Set<String> expandedSecrets = new HashSet<>();
         outboundSecretContainment.recordExpandedSecretsFromRequest(request.getTokenAttributes(), expandedSecrets);
         outboundSecretContainment
                 .recordExpandedSecretsFromRequest(request.getTokenProfileAttributes(), expandedSecrets);
         outboundSecretContainment.assertNoExpandedSecretOutbound(definitions, expandedSecrets);
+    }
+
+    /** Guards expanded secrets and persists the schema so attribute callbacks can resolve against it. */
+    private List<BaseAttribute> publishDefinitions(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions)
+            throws ConnectorException {
+        assertNoExpandedSecretEchoed(request, definitions);
         try {
             attributeEngine.updateDataAttributeDefinitions(UUID.fromString(connectorInfo.getUuid()), null, definitions);
         } catch (AttributeException e) {
@@ -426,14 +432,16 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
 
     /**
      * Resolves the token-profile scope once, fetches the operation schema with it and validates the submitted
-     * attributes in memory. Nothing the connector returns here reaches the attribute engine.
+     * attributes in memory. Nothing the connector returns here is persisted, and a schema echoing a secret the request
+     * carried is refused as on the listing path.
      */
     private TokenProfileScopedRequestV2Dto validatedScope(OperationKeyContext context,
             ConnectorCall<KeyScopedRequestV2Dto, List<BaseAttribute>> schemaCall, List<RequestAttribute> attributes)
             throws ConnectorException {
         TokenProfileScopedRequestV2Dto scope = tokenProfileScopedRequest(context.tokenProfile());
-        List<BaseAttribute> definitions = fetchSchema(schemaCall,
-                keyScoped(new KeyScopedRequestV2Dto(), context, scope));
+        KeyScopedRequestV2Dto request = keyScoped(new KeyScopedRequestV2Dto(), context, scope);
+        List<BaseAttribute> definitions = fetchSchema(schemaCall, request);
+        assertNoExpandedSecretEchoed(request, definitions);
         AttributeDefinitionUtils.validateAttributes(definitions, attributes);
         return scope;
     }
@@ -454,20 +462,30 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
                         (item, identifier) -> new SignatureDataV2Dto(decode(item.getData()), identifier));
     }
 
-    private static List<CipherResponseData> toCipherResponse(List<CipherDataV2Dto> items,
+    private List<CipherResponseData> toCipherResponse(List<CipherDataV2Dto> items,
             IdentifiedBatch<CipherDataV2Dto> batch) throws ConnectorException {
         List<CipherResponseData> response = new ArrayList<>(items.size());
         for (CipherDataV2Dto item : items) {
             CipherResponseData data = new CipherResponseData();
-            data.setData(Base64.getEncoder().encodeToString(item.getData()));
-            data.setIdentifier(batch.callerIdentifier(item.getIdentifier()));
+            data.setData(encodeRequired(item.getData()));
+            data.setIdentifier(batch.callerIdentifier(item.getIdentifier(), connectorInfo));
             response.add(data);
         }
         return response;
     }
 
     private static byte[] decode(String base64) {
-        return base64 == null ? null : Base64.getDecoder().decode(base64);
+        if (base64 == null || base64.isEmpty()) {
+            throw new ValidationException(ValidationError.create("Every batch item must carry data."));
+        }
+        return Base64.getDecoder().decode(base64);
+    }
+
+    private String encodeRequired(byte[] data) throws ConnectorException {
+        if (data == null || data.length == 0) {
+            throw new ConnectorException("Connector returned a batch item without data.", connectorInfo);
+        }
+        return Base64.getEncoder().encodeToString(data);
     }
 
     /** Sends every item under its position; the caller's identifiers (possibly null) come back by position. */
@@ -486,11 +504,13 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         }
 
         /** Restores the caller's identifier for the position the connector echoed back. */
-        String callerIdentifier(String positionalIdentifier) throws ConnectorException {
+        String callerIdentifier(String positionalIdentifier, ApiClientConnectorInfo connector)
+                throws ConnectorException {
             try {
                 return callerIdentifiers.get(Integer.parseInt(positionalIdentifier));
             } catch (NumberFormatException | IndexOutOfBoundsException e) {
-                throw new ConnectorException("Connector returned an identifier that was not part of the request.");
+                throw new ConnectorException("Connector returned an identifier that was not part of the request.", e,
+                        connector);
             }
         }
     }

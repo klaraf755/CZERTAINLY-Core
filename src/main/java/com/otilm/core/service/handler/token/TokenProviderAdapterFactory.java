@@ -1,5 +1,6 @@
 package com.otilm.core.service.handler.token;
 
+import com.otilm.api.clients.ApiClientConnectorInfo;
 import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.model.client.connector.v2.ConnectorInterface;
 import com.otilm.api.model.core.connector.FunctionGroupCode;
@@ -113,8 +114,10 @@ public class TokenProviderAdapterFactory {
         if (tokenInstance.connectorUuid() == null) {
             throw new NotFoundException(Connector.class, tokenInstance.connectorName());
         }
-        ImmutableConnectorFullModel connector = connectorInternalService
-                .getConnectorFullModelForApiClient(tokenInstance.connectorUuid());
+        // The cached single-row lookup: routing comes from the token's own interface columns, so the
+        // connector's interfaces and function groups are not needed here.
+        ApiClientConnectorInfo connector = connectorInternalService
+                .getConnectorForApiClient(tokenInstance.connectorUuid());
         if (tokenInstance.connectorInterfaceCode() == null) {
             return new TokenProviderV1Adapter(connectorApiFactory, connector);
         }
@@ -127,8 +130,8 @@ public class TokenProviderAdapterFactory {
         return forInterface(iface.code(), iface.version(), connector, owner);
     }
 
-    private TokenProviderAdapter forInterface(ConnectorInterface code, String version,
-            ImmutableConnectorFullModel connector, String owner) {
+    private TokenProviderAdapter forInterface(ConnectorInterface code, String version, ApiClientConnectorInfo connector,
+            String owner) {
         if (code != ConnectorInterface.CRYPTOGRAPHY) {
             throw new UnsupportedCryptographyProviderVersionException(
                     "Token provider is associated with a non-cryptography connector interface (" + owner + ")");
