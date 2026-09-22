@@ -46,7 +46,9 @@ import com.otilm.core.model.crypto.ProviderKeyItem;
 import com.otilm.core.model.crypto.RemoteKeyReference;
 import com.otilm.core.service.handler.LegacyOperationFixtures;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -54,6 +56,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -353,43 +356,78 @@ class KeyProviderV1AdapterTest {
         assertEquals(Base64.getEncoder().encodeToString(new byte[]{9}), response.getSignatures().get(0).getData());
     }
 
-    @Test
-    void signData_rejectsMetadataReference_beforeCallingConnector() {
+    @ParameterizedTest(name = "{0} / {1}")
+    @MethodSource("unsupportedV1Keys")
+    void operation_rejectsKeyWithoutV1Remotes_beforeCallingConnector(String operation, String reason,
+            RemoteKeyReference reference, UUID remoteTokenUuid, String expectedMessage, OperationCall call) {
         // given
         OperationKeyContext context = OperationKeyContext
-                .legacy(keyItem(KeyAlgorithm.MLDSA, new RemoteKeyReference.MetadataReference(List.of()),
-                        UUID.randomUUID()));
-        SignDataRequestDto request = new SignDataRequestDto();
-        request.setSignatureAttributes(List.of());
-        request.setData(List.of());
+                .legacy(keyItem(KeyAlgorithm.MLDSA, reference, remoteTokenUuid));
 
         // when
-        Executable sign = () -> adapter.signData(context, request);
+        Executable operate = () -> call.run(adapter, context);
 
         // then
-        ConnectorException failure = assertThrows(ConnectorException.class, sign);
-        assertEquals(
-                "This cryptographic operation requires a v1 remote key UUID; metadata references are not supported.",
-                failure.getMessage());
+        ConnectorException failure = assertThrows(ConnectorException.class, operate);
+        assertEquals(expectedMessage, failure.getMessage());
         verifyNoInteractions(operationsClient);
     }
 
-    @Test
-    void signData_rejectsMissingTokenInstanceUuid_beforeCallingConnector() {
-        // given
-        OperationKeyContext context = OperationKeyContext
-                .legacy(keyItem(KeyAlgorithm.MLDSA, new RemoteKeyReference.UuidReference(UUID.randomUUID()), null));
-        SignDataRequestDto request = new SignDataRequestDto();
-        request.setSignatureAttributes(List.of());
-        request.setData(List.of());
+    private static Stream<Arguments> unsupportedV1Keys() {
+        String keyMessage = "This cryptographic operation requires a v1 remote key UUID; "
+                + "metadata references are not supported.";
+        String tokenMessage = "This cryptographic operation requires a v1 remote token UUID.";
+        List<Arguments> references = List
+                .of(Arguments
+                        .of("metadata handle", new RemoteKeyReference.MetadataReference(List.of(metadataHandle())),
+                                UUID.randomUUID(), keyMessage),
+                        Arguments
+                                .of("empty metadata handle", new RemoteKeyReference.MetadataReference(List.of()),
+                                        UUID.randomUUID(), keyMessage),
+                        Arguments.of("missing reference", null, UUID.randomUUID(), keyMessage),
+                        Arguments
+                                .of("reference without a UUID", new RemoteKeyReference.UuidReference(null),
+                                        UUID.randomUUID(), keyMessage),
+                        Arguments
+                                .of("missing token UUID", new RemoteKeyReference.UuidReference(UUID.randomUUID()), null,
+                                        tokenMessage));
+        return operationCalls()
+                .entrySet()
+                .stream()
+                .flatMap(operation -> references
+                        .stream()
+                        .map(reference -> Arguments
+                                .of(operation.getKey(), reference.get()[0], reference.get()[1], reference.get()[2],
+                                        reference.get()[3], operation.getValue())));
+    }
 
-        // when
-        Executable sign = () -> adapter.signData(context, request);
+    private static Map<String, OperationCall> operationCalls() {
+        CipherDataRequestDto cipherRequest = new CipherDataRequestDto();
+        cipherRequest.setCipherAttributes(List.of());
+        cipherRequest.setCipherData(List.of());
+        SignDataRequestDto signRequest = new SignDataRequestDto();
+        signRequest.setSignatureAttributes(List.of());
+        signRequest.setData(List.of());
+        VerifyDataRequestDto verifyRequest = new VerifyDataRequestDto();
+        verifyRequest.setSignatureAttributes(List.of());
+        verifyRequest.setData(List.of());
+        verifyRequest.setSignatures(List.of());
+        return new LinkedHashMap<>(Map
+                .of("encrypt", (adapter, context) -> adapter.encryptData(context, cipherRequest), "decrypt",
+                        (adapter, context) -> adapter.decryptData(context, cipherRequest), "sign",
+                        (adapter, context) -> adapter.signData(context, signRequest), "verify",
+                        (adapter, context) -> adapter.verifyData(context, verifyRequest)));
+    }
 
-        // then
-        ConnectorException failure = assertThrows(ConnectorException.class, sign);
-        assertEquals("This cryptographic operation requires a v1 remote token UUID.", failure.getMessage());
-        verifyNoInteractions(operationsClient);
+    private static MetadataAttribute metadataHandle() {
+        MetadataAttributeV2 handle = new MetadataAttributeV2();
+        handle.setName("provider-key-handle");
+        return handle;
+    }
+
+    @FunctionalInterface
+    interface OperationCall {
+        void run(KeyProviderV1Adapter adapter, OperationKeyContext context) throws ConnectorException;
     }
 
     @Test

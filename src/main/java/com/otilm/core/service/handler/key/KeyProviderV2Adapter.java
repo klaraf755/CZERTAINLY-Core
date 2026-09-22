@@ -290,7 +290,12 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         CipherDataRequestV2Dto body = keyScoped(new CipherDataRequestV2Dto(), context, scope);
         body.setCipherAttributes(attributes);
         body.setCipherData(batch.items());
-        return toCipherResponse(operationCall.call(body), batch);
+        return inRequestOrder(operationCall.call(body), batch, CipherDataV2Dto::getIdentifier, (item, identifier) -> {
+            CipherResponseData data = new CipherResponseData();
+            data.setData(encodeRequired(item.getData()));
+            data.setIdentifier(identifier);
+            return data;
+        });
     }
 
     @Override
@@ -310,15 +315,15 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
                 || responseBody.getSignatures().isEmpty() || responseBody.getOperationMeta() != null) {
             throw new ConnectorException("Connector did not return a synchronous signing result.");
         }
-        List<SignatureResponseData> signatures = new ArrayList<>(responseBody.getSignatures().size());
-        for (SignatureDataV2Dto item : responseBody.getSignatures()) {
-            SignatureResponseData data = new SignatureResponseData();
-            data.setData(encodeRequired(item.getData()));
-            data.setIdentifier(batch.callerIdentifier(item.getIdentifier(), connectorInfo));
-            signatures.add(data);
-        }
         SignDataResponseDto result = new SignDataResponseDto();
-        result.setSignatures(signatures);
+        result
+                .setSignatures(inRequestOrder(responseBody.getSignatures(), batch, SignatureDataV2Dto::getIdentifier,
+                        (item, identifier) -> {
+                            SignatureResponseData data = new SignatureResponseData();
+                            data.setData(encodeRequired(item.getData()));
+                            data.setIdentifier(identifier);
+                            return data;
+                        }));
         return result;
     }
 
@@ -329,6 +334,7 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
                 || request.getData().size() != request.getSignatures().size()) {
             throw new ValidationException(ValidationError.create("Verification requires one signature per data item."));
         }
+        requireAlignedIdentifiers(request.getData(), request.getSignatures());
         List<RequestAttribute> attributes = orEmpty(request.getSignatureAttributes());
         TokenProfileScopedRequestV2Dto scope = validatedScope(context,
                 schemaRequest -> operationsApiClient.listVerifyAttributes(connectorInfo, schemaRequest), attributes);
@@ -339,16 +345,21 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         body.setData(data.items());
         body.setSignatures(signatures.items());
         VerifyDataResponseV2Dto response = operationsApiClient.verifyData(connectorInfo, body);
-        List<VerificationResponseData> verifications = new ArrayList<>(response.getVerifications().size());
-        for (VerificationResponseItemV2Dto item : response.getVerifications()) {
-            VerificationResponseData verification = new VerificationResponseData();
-            verification.setResult(Boolean.TRUE.equals(item.getResult()));
-            verification.setIdentifier(data.callerIdentifier(item.getIdentifier(), connectorInfo));
-            verification.setDetails(item.getDetails());
-            verifications.add(verification);
+        if (response == null || response.getVerifications() == null) {
+            throw new ConnectorException("Connector returned no verification result.", connectorInfo);
         }
+        // The connector's free-form details reach the caller, so they get the same containment as a schema.
+        assertNoExpandedSecretEchoed(scope, response);
         VerifyDataResponseDto result = new VerifyDataResponseDto();
-        result.setVerifications(verifications);
+        result
+                .setVerifications(inRequestOrder(response.getVerifications(), data,
+                        VerificationResponseItemV2Dto::getIdentifier, (item, identifier) -> {
+                            VerificationResponseData verification = new VerificationResponseData();
+                            verification.setResult(Boolean.TRUE.equals(item.getResult()));
+                            verification.setIdentifier(identifier);
+                            verification.setDetails(item.getDetails());
+                            return verification;
+                        }));
         return result;
     }
 
@@ -408,13 +419,13 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return definitions;
     }
 
-    /** Refuses a schema that echoes back a secret the request expanded for the connector. */
-    private void assertNoExpandedSecretEchoed(KeyScopedRequestV2Dto request, List<BaseAttribute> definitions) {
+    /** Refuses a connector payload that echoes back a secret the request expanded for it. */
+    private void assertNoExpandedSecretEchoed(TokenProfileScopedRequestV2Dto sentScope, Object payload) {
         Set<String> expandedSecrets = new HashSet<>();
-        outboundSecretContainment.recordExpandedSecretsFromRequest(request.getTokenAttributes(), expandedSecrets);
+        outboundSecretContainment.recordExpandedSecretsFromRequest(sentScope.getTokenAttributes(), expandedSecrets);
         outboundSecretContainment
-                .recordExpandedSecretsFromRequest(request.getTokenProfileAttributes(), expandedSecrets);
-        outboundSecretContainment.assertNoExpandedSecretOutbound(definitions, expandedSecrets);
+                .recordExpandedSecretsFromRequest(sentScope.getTokenProfileAttributes(), expandedSecrets);
+        outboundSecretContainment.assertNoExpandedSecretOutbound(payload, expandedSecrets);
     }
 
     /** Guards expanded secrets and persists the schema so attribute callbacks can resolve against it. */
@@ -446,6 +457,48 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return scope;
     }
 
+    /**
+     * Restores the order Core sent from the positional identifiers it assigned, so a connector that correlates by
+     * identifier and reorders the batch cannot hand the caller a silently permuted result.
+     */
+    private <S, R> List<R> inRequestOrder(List<S> items, IdentifiedBatch<?> batch, Function<S, String> identifierOf,
+            ResultMapper<S, R> toResult) throws ConnectorException {
+        List<String> callerIdentifiers = batch.callerIdentifiers();
+        if (items.size() != callerIdentifiers.size()) {
+            throw new ConnectorException("Connector returned " + items.size() + " results for "
+                    + callerIdentifiers.size() + " request items.", connectorInfo);
+        }
+        List<S> ordered = new ArrayList<>(Collections.nCopies(callerIdentifiers.size(), null));
+        for (S item : items) {
+            int position = batch.position(identifierOf.apply(item), connectorInfo);
+            if (ordered.get(position) != null) {
+                throw new ConnectorException("Connector returned the same identifier twice.", connectorInfo);
+            }
+            ordered.set(position, item);
+        }
+        List<R> results = new ArrayList<>(ordered.size());
+        for (int index = 0; index < ordered.size(); index++) {
+            results.add(toResult.map(ordered.get(index), callerIdentifiers.get(index)));
+        }
+        return results;
+    }
+
+    /**
+     * Core pairs data with signatures by position, so identifiers the caller sent on both lists must agree there;
+     * otherwise each item would be verified against the signature the caller meant for another one.
+     */
+    private static void requireAlignedIdentifiers(List<SignatureRequestData> data,
+            List<SignatureRequestData> signatures) {
+        for (int index = 0; index < data.size(); index++) {
+            String dataIdentifier = data.get(index).getIdentifier();
+            String signatureIdentifier = signatures.get(index).getIdentifier();
+            if (dataIdentifier != null && signatureIdentifier != null && !dataIdentifier.equals(signatureIdentifier)) {
+                throw new ValidationException(
+                        ValidationError.create("Data and signature identifiers must be sent in the same order."));
+            }
+        }
+    }
+
     private static List<RequestAttribute> orEmpty(List<RequestAttribute> attributes) {
         return attributes == null ? List.of() : attributes;
     }
@@ -460,18 +513,6 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return IdentifiedBatch
                 .of(items, SignatureRequestData::getIdentifier,
                         (item, identifier) -> new SignatureDataV2Dto(decode(item.getData()), identifier));
-    }
-
-    private List<CipherResponseData> toCipherResponse(List<CipherDataV2Dto> items,
-            IdentifiedBatch<CipherDataV2Dto> batch) throws ConnectorException {
-        List<CipherResponseData> response = new ArrayList<>(items.size());
-        for (CipherDataV2Dto item : items) {
-            CipherResponseData data = new CipherResponseData();
-            data.setData(encodeRequired(item.getData()));
-            data.setIdentifier(batch.callerIdentifier(item.getIdentifier(), connectorInfo));
-            response.add(data);
-        }
-        return response;
     }
 
     private static byte[] decode(String base64) {
@@ -503,21 +544,31 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
             return new IdentifiedBatch<>(List.copyOf(items), Collections.unmodifiableList(callerIdentifiers));
         }
 
-        /** Restores the caller's identifier for the position the connector echoed back. */
-        String callerIdentifier(String positionalIdentifier, ApiClientConnectorInfo connector)
-                throws ConnectorException {
+        /** Resolves the position the connector echoed back, which is the position Core sent the item at. */
+        int position(String positionalIdentifier, ApiClientConnectorInfo connector) throws ConnectorException {
+            int position;
             try {
-                return callerIdentifiers.get(Integer.parseInt(positionalIdentifier));
-            } catch (NumberFormatException | IndexOutOfBoundsException e) {
+                position = Integer.parseInt(positionalIdentifier);
+            } catch (NumberFormatException e) {
                 throw new ConnectorException("Connector returned an identifier that was not part of the request.", e,
                         connector);
             }
+            if (position < 0 || position >= callerIdentifiers.size()) {
+                throw new ConnectorException("Connector returned an identifier that was not part of the request.",
+                        connector);
+            }
+            return position;
         }
     }
 
     @FunctionalInterface
     private interface ConnectorCall<S, T> {
         T call(S request) throws ConnectorException;
+    }
+
+    @FunctionalInterface
+    private interface ResultMapper<S, R> {
+        R map(S item, String callerIdentifier) throws ConnectorException;
     }
 
 }

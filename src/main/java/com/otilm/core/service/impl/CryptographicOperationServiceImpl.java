@@ -549,8 +549,7 @@ public class CryptographicOperationServiceImpl
                     ValidationError.create("Selected item does not contain the complete keypair"));
         }
         if (privateKeyItem.getKeyMeta() != null) {
-            throw new ValidationException(
-                    ValidationError.create("CSR generation is not available for keys on a cryptography provider v2."));
+            throw new NotSupportedException("CSR generation is not available for keys on a cryptography provider v2.");
         }
         verifyActive(privateKeyItem.getState(), privateKeyItem.isEnabled());
         verifyActive(publicKeyItem.getState(), publicKeyItem.isEnabled());

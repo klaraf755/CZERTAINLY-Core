@@ -507,6 +507,104 @@ class KeyProviderV2AdapterTest {
     }
 
     @Test
+    void signData_restoresRequestOrder_whenConnectorReordersTheBatch() throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataResponseV2Dto body = new SignDataResponseV2Dto();
+        body
+                .setSignatures(List
+                        .of(new SignatureDataV2Dto(new byte[]{2}, "1"), new SignatureDataV2Dto(new byte[]{1}, "0")));
+        when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", "first"), signatureItem("Ag==", "second")));
+
+        // when
+        SignDataResponseDto response = adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertEquals("first", response.getSignatures().get(0).getIdentifier());
+        assertEquals(Base64.getEncoder().encodeToString(new byte[]{1}), response.getSignatures().get(0).getData());
+        assertEquals("second", response.getSignatures().get(1).getIdentifier());
+        assertEquals(Base64.getEncoder().encodeToString(new byte[]{2}), response.getSignatures().get(1).getData());
+    }
+
+    @Test
+    void signData_rejectsRepeatedPosition() throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataResponseV2Dto body = new SignDataResponseV2Dto();
+        body
+                .setSignatures(List
+                        .of(new SignatureDataV2Dto(new byte[]{1}, "0"), new SignatureDataV2Dto(new byte[]{2}, "0")));
+        when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", null), signatureItem("Ag==", null)));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(ConnectorException.class, sign);
+    }
+
+    @Test
+    void signData_rejectsResultWithFewerItemsThanTheRequest() throws Exception {
+        // given
+        when(operationsClient.listSignAttributes(any(), any())).thenReturn(List.of());
+        SignDataResponseV2Dto body = new SignDataResponseV2Dto();
+        body.setSignatures(List.of(new SignatureDataV2Dto(new byte[]{1}, "0")));
+        when(operationsClient.signData(any(), any())).thenReturn(ResponseEntity.ok(body));
+        SignDataRequestDto request = new SignDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", null), signatureItem("Ag==", null)));
+
+        // when
+        Executable sign = () -> adapter.signData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(ConnectorException.class, sign);
+    }
+
+    @Test
+    void verifyData_rejectsCallerIdentifiersThatDoNotLineUp_beforeCallingConnector() throws Exception {
+        // given
+        VerifyDataRequestDto request = new VerifyDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", "a"), signatureItem("Ag==", "b")));
+        request.setSignatures(List.of(signatureItem("Aw==", "b"), signatureItem("BA==", "a")));
+
+        // when
+        Executable verify = () -> adapter.verifyData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(ValidationException.class, verify);
+        verifyNoInteractions(operationsClient);
+    }
+
+    @Test
+    void verifyData_rejectsResultEchoingAnExpandedSecret() throws Exception {
+        // given
+        String expandedSecret = "resolved-provider-password";
+        stubExpandedSecret(Resource.TOKEN, expandedSecret);
+        when(operationsClient.listVerifyAttributes(any(), any())).thenReturn(List.of());
+        VerifyDataResponseV2Dto response = new VerifyDataResponseV2Dto();
+        response.setVerifications(List.of(new VerificationResponseItemV2Dto(false, "0", expandedSecret)));
+        when(operationsClient.verifyData(any(), any())).thenReturn(response);
+        VerifyDataRequestDto request = new VerifyDataRequestDto();
+        request.setSignatureAttributes(List.of());
+        request.setData(List.of(signatureItem("AQ==", null)));
+        request.setSignatures(List.of(signatureItem("Ag==", null)));
+
+        // when
+        Executable verify = () -> adapter.verifyData(v2Context(metadata("handle")), request);
+
+        // then
+        assertThrows(OutboundSecretLeakException.class, verify);
+    }
+
+    @Test
     void signData_resolvesScopeOnce_andNeverTouchesTheAttributeEngineForTheSchema() throws Exception {
         // given
         when(operationsClient.listSignAttributes(any(), any()))

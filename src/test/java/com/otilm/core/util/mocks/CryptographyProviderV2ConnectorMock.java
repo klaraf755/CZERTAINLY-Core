@@ -6,7 +6,7 @@ import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 
-/** WireMock connector for the stateless cryptography-provider v2 token API. */
+/** WireMock connector for the stateless cryptography-provider v2 token and operations APIs. */
 public class CryptographyProviderV2ConnectorMock extends BaseConnectorMock {
 
     private static final String OPERATIONS = "/v2/cryptographyProvider/operations/";

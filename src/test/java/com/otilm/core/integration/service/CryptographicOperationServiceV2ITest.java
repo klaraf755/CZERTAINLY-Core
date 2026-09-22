@@ -340,7 +340,7 @@ class CryptographicOperationServiceV2ITest extends BaseSpringBootTest {
                         null, null);
 
         // then
-        ValidationException exception = assertThrows(ValidationException.class, generateCsr);
+        NotSupportedException exception = assertThrows(NotSupportedException.class, generateCsr);
         assertTrue(exception.getMessage().contains("cryptography provider v2"));
     }
 
