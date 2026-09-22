@@ -103,8 +103,6 @@ class OperationAttributeResolverTest {
 
     @Test
     void propagatesValidationFromDerefUnwrapped() throws Exception {
-        // A disabled/invalid-state secret or vault profile throws an unchecked ValidationException from the deref. It
-        // names the offending object and maps to 422, so wrapping it would hand the caller a 500 with no message.
         runElevationInline();
         UUID connectorUuid = UUID.randomUUID();
         List<RequestAttribute> stored = List.of(referenceAttribute());
