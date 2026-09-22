@@ -222,7 +222,6 @@ public class TokenProviderV2Adapter implements TokenProviderAdapter {
         outboundSecretContainment.assertNoExpandedSecretOutbound(definitions, expandedSecrets);
     }
 
-    /** Guards the connector's schema against an echoed secret, then persists it. */
     private void persistAttributeDefinitions(UUID connectorUuid, @Nullable TokenScopedRequestV2Dto sentRequest,
             List<BaseAttribute> definitions, String operation) throws ConnectorException {
         assertNoExpandedSecretEchoed(sentRequest, definitions);

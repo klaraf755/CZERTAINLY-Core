@@ -419,7 +419,6 @@ public class KeyProviderV2Adapter implements KeyProviderAdapter {
         return definitions;
     }
 
-    /** Refuses a connector payload that echoes back a secret the request expanded for it. */
     private void assertNoExpandedSecretEchoed(TokenProfileScopedRequestV2Dto sentScope, Object payload) {
         Set<String> expandedSecrets = new HashSet<>();
         outboundSecretContainment.recordExpandedSecretsFromRequest(sentScope.getTokenAttributes(), expandedSecrets);
