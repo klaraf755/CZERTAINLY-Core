@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Pins the factory's routing table, including each refusal branch. */
@@ -181,7 +182,7 @@ class TokenProviderAdapterFactoryTest {
     void forToken_basicModel_returnsV1Adapter_forTokenWithoutInterface() throws Exception {
         // given
         ImmutableConnectorFullModel connector = connector(List.of(cryptographyInterface("v2")), List.of());
-        when(connectorInternalService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        when(connectorInternalService.getConnectorForApiClient(connector.uuid())).thenReturn(connector);
         TokenInstanceBasicModel token = basicToken(connector.uuid(), null, null);
 
         // when
@@ -189,13 +190,14 @@ class TokenProviderAdapterFactoryTest {
 
         // then
         assertInstanceOf(TokenProviderV1Adapter.class, adapter);
+        verify(connectorInternalService).getConnectorForApiClient(connector.uuid());
     }
 
     @Test
     void forToken_basicModel_returnsV1Adapter_forInterfaceUuidWithoutCode() throws Exception {
         // given
         ImmutableConnectorFullModel connector = connector(List.of(cryptographyInterface("v2")), List.of());
-        when(connectorInternalService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        when(connectorInternalService.getConnectorForApiClient(connector.uuid())).thenReturn(connector);
         TokenInstanceBasicModel token = new ImmutableTokenInstanceBasicModel(UUID.randomUUID(), null, "token",
                 TokenInstanceStatus.UNKNOWN, "SOFT", connector.uuid(), "connector", UUID.randomUUID(), null, null, 0);
 
@@ -210,7 +212,7 @@ class TokenProviderAdapterFactoryTest {
     void forToken_basicModel_returnsV2Adapter_forCryptographyV2() throws Exception {
         // given
         ImmutableConnectorFullModel connector = connector(List.of(cryptographyInterface("v2")), List.of());
-        when(connectorInternalService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        when(connectorInternalService.getConnectorForApiClient(connector.uuid())).thenReturn(connector);
         TokenInstanceBasicModel token = basicToken(connector.uuid(), ConnectorInterface.CRYPTOGRAPHY, "v2");
 
         // when
@@ -218,13 +220,14 @@ class TokenProviderAdapterFactoryTest {
 
         // then
         assertInstanceOf(TokenProviderV2Adapter.class, adapter);
+        verify(connectorInternalService).getConnectorForApiClient(connector.uuid());
     }
 
     @Test
     void forToken_basicModel_throws_forUnsupportedVersion() throws Exception {
         // given
         ImmutableConnectorFullModel connector = connector(List.of(), List.of());
-        when(connectorInternalService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        when(connectorInternalService.getConnectorForApiClient(connector.uuid())).thenReturn(connector);
         TokenInstanceBasicModel token = basicToken(connector.uuid(), ConnectorInterface.CRYPTOGRAPHY, "v3");
 
         // when

@@ -55,6 +55,20 @@ class TokenInstanceBasicModelTest {
         assertThat(version).isEqualTo(expectedVersion);
     }
 
+    @Test
+    void providerInterfaceVersion_readsTheInterfaceCode_notTheForeignKey() {
+        // given
+        TokenInstanceReference token = new TokenInstanceReference();
+        token.setConnectorInterfaceUuid(UUID.randomUUID());
+
+        // when
+        ImmutableTokenInstanceBasicModel basic = ImmutableTokenInstanceBasicModel.from(token);
+
+        // then
+        assertThat(basic.connectorInterfaceUuid()).isNotNull();
+        assertThat(basic.providerInterfaceVersion()).isEqualTo(1);
+    }
+
     private static Stream<Arguments> tokenModels() {
         Function<TokenInstanceReference, TokenInstanceBasicModel> basic = ImmutableTokenInstanceBasicModel::from;
         Function<TokenInstanceReference, TokenInstanceBasicModel> full = ImmutableTokenInstanceFullModel::from;
