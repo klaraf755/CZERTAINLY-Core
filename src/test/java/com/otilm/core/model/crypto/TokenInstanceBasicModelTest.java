@@ -41,11 +41,11 @@ class TokenInstanceBasicModelTest {
     @ParameterizedTest(name = "{0}, interface={1}")
     @MethodSource("tokenModels")
     void providerInterfaceVersion_matchesConnectorInterfacePresence(
-            Function<TokenInstanceReference, TokenInstanceBasicModel> snapshotFactory, UUID interfaceUuid,
-            int expectedVersion) {
+            Function<TokenInstanceReference, TokenInstanceBasicModel> snapshotFactory,
+            ConnectorInterfaceEntity connectorInterface, int expectedVersion) {
         // given
         TokenInstanceReference token = new TokenInstanceReference();
-        token.setConnectorInterfaceUuid(interfaceUuid);
+        token.setConnectorInterface(connectorInterface);
         TokenInstanceBasicModel snapshot = snapshotFactory.apply(token);
 
         // when
@@ -58,13 +58,16 @@ class TokenInstanceBasicModelTest {
     private static Stream<Arguments> tokenModels() {
         Function<TokenInstanceReference, TokenInstanceBasicModel> basic = ImmutableTokenInstanceBasicModel::from;
         Function<TokenInstanceReference, TokenInstanceBasicModel> full = ImmutableTokenInstanceFullModel::from;
-        UUID v2InterfaceUuid = UUID.randomUUID();
+        ConnectorInterfaceEntity cryptographyV2 = new ConnectorInterfaceEntity();
+        cryptographyV2.setUuid(UUID.randomUUID());
+        cryptographyV2.setInterfaceCode(ConnectorInterface.CRYPTOGRAPHY);
+        cryptographyV2.setVersion("v2");
         int v1 = 1;
         int v2 = 2;
         return Stream
                 .of(arguments(named("basic v1", basic), null, v1),
-                        arguments(named("basic v2", basic), v2InterfaceUuid, v2),
+                        arguments(named("basic v2", basic), cryptographyV2, v2),
                         arguments(named("full v1", full), null, v1),
-                        arguments(named("full v2", full), v2InterfaceUuid, v2));
+                        arguments(named("full v2", full), cryptographyV2, v2));
     }
 }

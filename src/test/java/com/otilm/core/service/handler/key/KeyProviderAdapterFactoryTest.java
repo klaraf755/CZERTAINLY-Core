@@ -61,6 +61,7 @@ class KeyProviderAdapterFactoryTest {
         connector = new ImmutableConnectorFullModel(UUID.randomUUID(), "provider", ConnectorVersion.V2,
                 "http://connector.test", null, List.of(), null, null, List.of(cryptographyInterface("v2")), List.of());
         when(connectorService.getConnectorFullModelForApiClient(connector.uuid())).thenReturn(connector);
+        when(connectorService.getConnectorForApiClient(connector.uuid())).thenReturn(connector);
     }
 
     @Test
