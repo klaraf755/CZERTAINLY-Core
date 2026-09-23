@@ -462,12 +462,12 @@
                               "type": "string",
                               "oneOf": [
                                 {
-                                  "minLength": 12,
-                                  "maxLength": 12
+                                  "minLength": 16,
+                                  "maxLength": 16
                                 },
                                 {
-                                  "minLength": 44,
-                                  "maxLength": 44
+                                  "minLength": 64,
+                                  "maxLength": 64
                                 }
                               ]
                             }

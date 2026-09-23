@@ -10,7 +10,7 @@ import com.otilm.core.oid.OidHandler;
 import com.otilm.core.serialization.ObjectMapperFactory;
 import java.io.IOException;
 import java.math.BigInteger;
-import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 import org.bouncycastle.asn1.ASN1Boolean;
@@ -44,7 +44,7 @@ public final class AsnJsonCodec {
     private static final String TAG_NO = "tagNo";
     private static final String EXPLICIT = "explicit";
     private static final String VALUE = "value";
-    private static final String PAD_BITS = "padBits";
+    private static final String LENGTH = "length";
 
     /**
      * Every node type this grammar names. Kept beside the switch that reads them, and pinned by a test, so a type added
@@ -128,7 +128,7 @@ public final class AsnJsonCodec {
             case "ia5String" -> ia5String(requireText(value, path + ".ia5String"), path + ".ia5String");
             case "printableString" ->
                 printableString(requireText(value, path + ".printableString"), path + ".printableString");
-            case "octetString" -> new DEROctetString(requireBase64(value, path + ".octetString"));
+            case "octetString" -> new DEROctetString(requireHex(value, path + ".octetString"));
             case "bitString" -> parseBitString(value, path + ".bitString");
             case "generalizedTime" ->
                 generalizedTime(requireText(value, path + ".generalizedTime"), path + ".generalizedTime");
@@ -183,17 +183,26 @@ public final class AsnJsonCodec {
         return new ASN1ObjectIdentifier(oid);
     }
 
+    /**
+     * A bit string carries its significant bit count rather than its unused-bit count, which is the form X.697 &sect;20
+     * gives a variable-length bit string. The octets are padded to the next multiple of eight, so the count also fixes
+     * how many octets may appear.
+     */
     private static ASN1Encodable parseBitString(JsonNode node, String path) {
         if (!node.isObject() || !node.has(VALUE)) {
-            throw new ValidationException("Node at %s must carry a base64 value and optional padBits".formatted(path));
+            throw new ValidationException(
+                    "Node at %s must carry a hexadecimal value and optional length".formatted(path));
         }
-        rejectUnknownMembers(node, path, Set.of(VALUE, PAD_BITS));
-        byte[] bytes = requireBase64(node.get(VALUE), path + "." + VALUE);
-        int padBits = node.has(PAD_BITS) ? requireBoundedInt(node.get(PAD_BITS), path + "." + PAD_BITS, 0, 7) : 0;
-        if (bytes.length == 0 && padBits != 0) {
-            throw new ValidationException("Value at %s has no content, so padBits must be 0".formatted(path));
+        rejectUnknownMembers(node, path, Set.of(VALUE, LENGTH));
+        byte[] bytes = requireHex(node.get(VALUE), path + "." + VALUE);
+        int bits = node.has(LENGTH)
+                ? requireBoundedInt(node.get(LENGTH), path + "." + LENGTH, 0, bytes.length * 8)
+                : bytes.length * 8;
+        if (bits <= (bytes.length - 1) * 8) {
+            throw new ValidationException("Value at %s carries %d octets, more than a %d-bit string occupies"
+                    .formatted(path, bytes.length, bits));
         }
-        return new DERBitString(bytes, padBits);
+        return new DERBitString(bytes, bytes.length * 8 - bits);
     }
 
     private static boolean requireBoolean(JsonNode node, String path) {
@@ -263,11 +272,13 @@ public final class AsnJsonCodec {
         return node.textValue();
     }
 
-    private static byte[] requireBase64(JsonNode node, String path) {
+    /** Octets are hexadecimal, which is the form X.697 gives an octet string in the absence of a BASE64 instruction. */
+    private static byte[] requireHex(JsonNode node, String path) {
         try {
-            return Base64.getDecoder().decode(requireText(node, path));
+            return HexFormat.of().parseHex(requireText(node, path));
         } catch (IllegalArgumentException e) {
-            throw new ValidationException("Value at %s is not valid base64".formatted(path));
+            throw new ValidationException(
+                    "Value at %s is not an even-length string of hexadecimal digits".formatted(path));
         }
     }
 }

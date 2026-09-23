@@ -176,7 +176,7 @@ class AttributeEngineJsonExtensionValueTest {
 
         assertThat(AttributeEngine
                 .validateJsonExtensionValues(definition,
-                        value(definition, "{\"bitString\":{\"value\":\"gA==\",\"padBits\":7}}")))
+                        value(definition, "{\"bitString\":{\"value\":\"80\",\"length\":1}}")))
                 .singleElement()
                 .satisfies(error -> assertThat(error.getErrorDescription()).contains("Key Usage"));
 

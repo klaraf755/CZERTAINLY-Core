@@ -102,13 +102,13 @@ class ShippedExtensionSchemaTest {
 
     @Test
     void subjectKeyIdentifier() throws Exception {
-        String tree = "{\"octetString\":\"AQID\"}";
+        String tree = "{\"octetString\":\"010203\"}";
         assertAccepts("2.5.29.14", tree);
 
         SubjectKeyIdentifier parsed = SubjectKeyIdentifier.getInstance(ASN1Primitive.fromByteArray(encode(tree)));
         assertThat(parsed.getKeyIdentifier()).isEqualTo(new byte[]{1, 2, 3});
 
-        assertRejects("2.5.29.14", "{\"sequence\":[{\"octetString\":\"AQID\"}]}");
+        assertRejects("2.5.29.14", "{\"sequence\":[{\"octetString\":\"010203\"}]}");
     }
 
     @Test
@@ -258,9 +258,9 @@ class ShippedExtensionSchemaTest {
                 "{\"tagged\":{\"tagNo\":0,\"explicit\":false,\"value\":{\"sequence\":[]}}}"));
 
         assertAccepts("2.5.29.30", nameConstraintsWithSubtree(
-                "{\"tagged\":{\"tagNo\":7,\"explicit\":false,\"value\":{\"octetString\":\"wAACAP////8=\"}}}"));
+                "{\"tagged\":{\"tagNo\":7,\"explicit\":false,\"value\":{\"octetString\":\"C0000200FFFFFFFF\"}}}"));
         assertRejects("2.5.29.30", nameConstraintsWithSubtree(
-                "{\"tagged\":{\"tagNo\":7,\"explicit\":false,\"value\":{\"octetString\":\"wAACAA==\"}}}"));
+                "{\"tagged\":{\"tagNo\":7,\"explicit\":false,\"value\":{\"octetString\":\"C0000200\"}}}"));
     }
 
 }

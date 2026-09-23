@@ -1,7 +1,6 @@
 package com.otilm.core.util;
 
 import com.otilm.api.exception.ValidationException;
-import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -46,15 +45,14 @@ class AsnJsonCodecTest {
         }
 
         @Test
-        void octetStringTakesBase64() {
-            assertThat(hex("{\"octetString\":\"" + Base64.getEncoder().encodeToString(new byte[]{1, 2}) + "\"}"))
-                    .isEqualTo("04 02 01 02");
+        void octetStringTakesHex() {
+            assertThat(hex("{\"octetString\":\"0102\"}")).isEqualTo("04 02 01 02");
         }
 
         @Test
-        void bitStringTakesBase64AndPadBits() {
-            assertThat(hex("{\"bitString\":{\"value\":\"" + Base64.getEncoder().encodeToString(new byte[]{(byte) 0xA0})
-                    + "\",\"padBits\":5}}")).isEqualTo("03 02 05 A0");
+        void bitStringTakesHexAndABitCount() {
+            // Three significant bits in one octet: DER records the five unused bits, JER the three used ones.
+            assertThat(hex("{\"bitString\":{\"value\":\"A0\",\"length\":3}}")).isEqualTo("03 02 05 A0");
         }
 
         @Test
@@ -129,17 +127,17 @@ class AsnJsonCodecTest {
         @Test
         void outOfRangePadBitsRejected() {
             // BouncyCastle throws IllegalArgumentException for these; unguarded they would escape as a 500.
-            for (String padBits : List.of("9", "-1", "99999999999999999999")) {
+            for (String bitCount : List.of("9", "-1", "99999999999999999999")) {
                 assertThatThrownBy(() -> AsnJsonCodec
-                        .encodeFromString("{\"bitString\":{\"value\":\"oA==\",\"padBits\":" + padBits + "}}"))
+                        .encodeFromString("{\"bitString\":{\"value\":\"A0\",\"length\":" + bitCount + "}}"))
                         .isInstanceOf(ValidationException.class)
-                        .hasMessageContaining("$.bitString.padBits");
+                        .hasMessageContaining("$.bitString.length");
             }
         }
 
         @Test
-        void padBitsOnEmptyContentRejected() {
-            assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"bitString\":{\"value\":\"\",\"padBits\":5}}"))
+        void aBitCountOnEmptyContentRejected() {
+            assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"bitString\":{\"value\":\"\",\"length\":5}}"))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("$.bitString");
         }
@@ -231,10 +229,10 @@ class AsnJsonCodecTest {
 
     @Test
     void rejectsAMisspelledBitStringMember() {
-        // "padbits" would default padBits to 0 and change the encoded value.
-        assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"bitString\":{\"value\":\"gA==\",\"padbits\":7}}"))
+        // "Length" would leave length unset and silently encode every bit of the octet as significant.
+        assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"bitString\":{\"value\":\"80\",\"Length\":1}}"))
                 .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("padbits");
+                .hasMessageContaining("Length");
     }
 
     @Test
