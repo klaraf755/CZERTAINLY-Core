@@ -12,6 +12,7 @@
           "maxItems": 2,
           "prefixItems": [
             {
+              "title": "permittedSubtrees",
               "type": "object",
               "required": [
                 "tagged"
@@ -39,6 +40,7 @@
               }
             },
             {
+              "title": "excludedSubtrees",
               "type": "object",
               "required": [
                 "tagged"
@@ -73,6 +75,7 @@
           "maxItems": 1,
           "prefixItems": [
             {
+              "title": "permittedSubtrees",
               "type": "object",
               "required": [
                 "tagged"
@@ -107,6 +110,7 @@
           "maxItems": 1,
           "prefixItems": [
             {
+              "title": "excludedSubtrees",
               "type": "object",
               "required": [
                 "tagged"
@@ -167,8 +171,10 @@
           "maxItems": 1,
           "prefixItems": [
             {
+              "title": "base",
               "oneOf": [
                 {
+                  "title": "otherName",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -200,12 +206,14 @@
                               "maxItems": 2,
                               "prefixItems": [
                                 {
+                                  "title": "type-id",
                                   "type": "object",
                                   "required": [
                                     "oid"
                                   ]
                                 },
                                 {
+                                  "title": "value",
                                   "type": "object",
                                   "required": [
                                     "tagged"
@@ -238,6 +246,7 @@
                   }
                 },
                 {
+                  "title": "rfc822Name",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -268,6 +277,7 @@
                   }
                 },
                 {
+                  "title": "dNSName",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -298,6 +308,7 @@
                   }
                 },
                 {
+                  "title": "x400Address",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -328,6 +339,7 @@
                   }
                 },
                 {
+                  "title": "directoryName",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -358,6 +370,7 @@
                   }
                 },
                 {
+                  "title": "ediPartyName",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -388,6 +401,7 @@
                   }
                 },
                 {
+                  "title": "uniformResourceIdentifier",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -418,6 +432,7 @@
                   }
                 },
                 {
+                  "title": "iPAddress",
                   "type": "object",
                   "required": [
                     "tagged"
@@ -463,6 +478,7 @@
                   }
                 },
                 {
+                  "title": "registeredID",
                   "type": "object",
                   "required": [
                     "tagged"

@@ -297,4 +297,45 @@ class ExtensionSchemasTest {
         assertThat(messages).anySatisfy(message -> assertThat(message).contains("not loadable"));
         assertThat(System.nanoTime() - startedAt).isLessThan(java.time.Duration.ofSeconds(2).toNanos());
     }
+
+    @Test
+    void requireValidSchemaRejectsATitleNamingANodeType() {
+        for (String nodeType : AsnJsonCodec.NODE_TYPES) {
+            String document = "{\"prefixItems\":[{\"title\":\"%s\"}]}".formatted(nodeType);
+            assertThatThrownBy(() -> ExtensionSchemas.requireValidSchema(document))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("names an ASN.1 node type");
+        }
+    }
+
+    @Test
+    void requireValidSchemaAcceptsATitleNamingAMember() {
+        assertThatNoException()
+                .isThrownBy(() -> ExtensionSchemas
+                        .requireValidSchema("{\"prefixItems\":[{\"title\":\"pathLenConstraint\"}]}"));
+    }
+
+    @Test
+    void requireValidSchemaFindsATitleNestedInTheDocument() {
+        // The check walks subschemas, so a collision buried under $defs is caught rather than only a top-level one.
+        assertThatThrownBy(() -> ExtensionSchemas
+                .requireValidSchema("{\"$defs\":{\"a\":{\"properties\":{\"b\":{\"title\":\"tagged\"}}}}}"))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("names an ASN.1 node type");
+    }
+
+    @Test
+    void aTitleDoesNotChangeWhatASchemaAccepts() {
+        // title is an annotation: it names a member for callers, and validation must be unaffected by it.
+        String withTitle = "{\"type\":\"object\",\"required\":[\"integer\"],\"title\":\"tier\"}";
+        ExtensionSchemas.requireValidSchema(withTitle);
+        OidHandler
+                .cacheOid(OidCategory.CERTIFICATE_EXTENSION, "1.3.6.1.4.1.99999.9.11",
+                        OidRecord.builder().displayName("Titled").valueSchema(withTitle).build());
+
+        assertThat(ExtensionSchemas.validateShape("1.3.6.1.4.1.99999.9.11", AsnJsonCodec.parse("{\"integer\":1}")))
+                .isEmpty();
+        assertThat(ExtensionSchemas.validateShape("1.3.6.1.4.1.99999.9.11", AsnJsonCodec.parse("{\"oid\":\"1.2.3\"}")))
+                .isNotEmpty();
+    }
 }

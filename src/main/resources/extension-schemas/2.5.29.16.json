@@ -12,6 +12,7 @@
           "maxItems": 2,
           "prefixItems": [
             {
+              "title": "notBefore",
               "type": "object",
               "required": [
                 "tagged"
@@ -42,6 +43,7 @@
               }
             },
             {
+              "title": "notAfter",
               "type": "object",
               "required": [
                 "tagged"
@@ -79,6 +81,7 @@
           "maxItems": 1,
           "prefixItems": [
             {
+              "title": "notBefore",
               "type": "object",
               "required": [
                 "tagged"
@@ -116,6 +119,7 @@
           "maxItems": 1,
           "prefixItems": [
             {
+              "title": "notAfter",
               "type": "object",
               "required": [
                 "tagged"

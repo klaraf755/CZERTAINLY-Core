@@ -149,6 +149,7 @@ public final class ExtensionSchemas {
         }
         requireSupportedDialect(parsed);
         rejectNonLocalRefs(parsed, "$", documentId(parsed));
+        rejectNodeTypeTitles(parsed, "$");
         requireWellFormedKeywords(parsed);
         try {
             FACTORY.getSchema(parsed);
@@ -211,6 +212,28 @@ public final class ExtensionSchemas {
             String childPath = path + "." + property.getKey();
             subschemasOf(property.getKey(), property.getValue())
                     .forEach(child -> rejectNonLocalRefs(child, childPath, documentId));
+        }
+    }
+
+    /**
+     * Rejects a {@code title} that names an ASN.1 node type. A title names the member a subschema describes, which is
+     * what lets a caller address it by name rather than by position; a member called {@code sequence} or {@code set}
+     * would be indistinguishable from the node type of the same name.
+     */
+    private static void rejectNodeTypeTitles(JsonNode node, String path) {
+        if (node == null || !node.isObject()) {
+            return;
+        }
+        JsonNode title = node.get("title");
+        if (title != null && title.isTextual() && AsnJsonCodec.NODE_TYPES.contains(title.textValue())) {
+            throw new ValidationException(
+                    "Not a valid JSON Schema document: title '%s' at %s names an ASN.1 node type; a title names the member a subschema describes, so it cannot be one"
+                            .formatted(title.textValue(), path));
+        }
+        for (Map.Entry<String, JsonNode> property : node.properties()) {
+            String childPath = path + "." + property.getKey();
+            subschemasOf(property.getKey(), property.getValue())
+                    .forEach(child -> rejectNodeTypeTitles(child, childPath));
         }
     }
 

@@ -78,6 +78,20 @@ class AsnJsonCodecTest {
             assertThat(hex("{\"tagged\":{\"tagNo\":0,\"explicit\":false,\"value\":{\"integer\":1}}}"))
                     .isEqualTo("80 01 01");
         }
+
+        @Test
+        void nodeTypesNamesEveryTypeTheGrammarKnows() {
+            // NODE_TYPES and the switch in toAsn1 must move together. A wrong value shape fails with its own
+            // message, so only a name the switch does not handle reports an unknown node type.
+            for (String nodeType : AsnJsonCodec.NODE_TYPES) {
+                assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"%s\":{}}".formatted(nodeType)))
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageNotContaining("Unknown node type");
+            }
+            assertThatThrownBy(() -> AsnJsonCodec.encodeFromString("{\"utf8string\":\"a\"}"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("Unknown node type");
+        }
     }
 
     @Nested

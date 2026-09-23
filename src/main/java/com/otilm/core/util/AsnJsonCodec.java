@@ -46,6 +46,14 @@ public final class AsnJsonCodec {
     private static final String VALUE = "value";
     private static final String PAD_BITS = "padBits";
 
+    /**
+     * Every node type this grammar names. Kept beside the switch that reads them, and pinned by a test, so a type added
+     * there cannot go missing here.
+     */
+    public static final Set<String> NODE_TYPES = Set
+            .of("boolean", "integer", "oid", "utf8String", "ia5String", "printableString", "octetString", "bitString",
+                    "generalizedTime", "null", "sequence", "set", "tagged");
+
     private static final Logger logger = LoggerFactory.getLogger(AsnJsonCodec.class);
     private static final ObjectMapper MAPPER = ObjectMapperFactory.wire();
 
