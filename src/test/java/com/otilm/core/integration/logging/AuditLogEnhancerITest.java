@@ -38,7 +38,8 @@ class AuditLogEnhancerITest extends BaseSpringBootTest {
         Certificate notIssued = certificateRepository.save(aCertificate().withCommonName("notIssued").build());
 
         List<ResourceObjectIdentity> enriched = auditLogEnhancer
-                .enrichObjectUuids(List.of(notIssued.getUuid()), Resource.CERTIFICATE);
+                .enrichObjectIdentities(List.of(new ResourceObjectIdentity(null, notIssued.getUuid())),
+                        Resource.CERTIFICATE);
 
         assertThat(enriched).containsExactly(new ResourceObjectIdentity("notIssued (Not Issued)", notIssued.getUuid()));
     }
