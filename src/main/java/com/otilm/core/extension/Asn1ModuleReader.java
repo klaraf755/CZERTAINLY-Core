@@ -205,7 +205,7 @@ public final class Asn1ModuleReader {
         while (!peek().equals("::=")) {
             String token = take();
             switch (token) {
-                case "IMPLICIT", "EXPLICIT", "AUTOMATIC" -> {
+                case IMPLICIT, EXPLICIT, AUTOMATIC -> {
                     require("TAGS");
                     tagging = token;
                 }
@@ -220,7 +220,7 @@ public final class Asn1ModuleReader {
         }
         require("::=");
         require("BEGIN");
-        if ("AUTOMATIC".equals(tagging)) {
+        if (AUTOMATIC.equals(tagging)) {
             // AUTOMATIC TAGS assigns [0], [1], ... to every member, which this reader does not do; reading the
             // module as if the clause were absent would encode every member with the wrong tag.
             throw new ValidationException(
@@ -235,7 +235,7 @@ public final class Asn1ModuleReader {
                     "The extension's ASN.1 module declares EXTENSIBILITY IMPLIED, which this platform does not "
                             + "support; its types are closed to the members they name");
         }
-        implicitTags = "IMPLICIT".equals(tagging);
+        implicitTags = IMPLICIT.equals(tagging);
         while (!peek().equals("END") && at < tokens.size()) {
             String name = take();
             require("::=");
@@ -430,9 +430,9 @@ public final class Asn1ModuleReader {
             if (accept("[")) {
                 tag = number(take());
                 require("]");
-                if (accept("EXPLICIT")) {
+                if (accept(EXPLICIT)) {
                     explicit = true;
-                } else if (accept("IMPLICIT")) {
+                } else if (accept(IMPLICIT)) {
                     explicit = false;
                 }
             }
@@ -733,6 +733,9 @@ public final class Asn1ModuleReader {
 
     /** A tag that matches anything: an undescribed member's, which could carry any type at all. */
     private static final String ANY_TAG = "*";
+    private static final String IMPLICIT = "IMPLICIT";
+    private static final String EXPLICIT = "EXPLICIT";
+    private static final String AUTOMATIC = "AUTOMATIC";
 
     /** The tags an encoding of {@code member} can begin with, as strings so classes cannot be confused. */
     private static Set<String> leadingTags(Member member) {
