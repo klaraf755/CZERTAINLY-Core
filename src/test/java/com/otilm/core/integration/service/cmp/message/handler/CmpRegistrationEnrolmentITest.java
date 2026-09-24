@@ -66,9 +66,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -127,6 +129,9 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     private RegistrationChallengeStore registrationChallengeStore;
     @Autowired
     private PollFeature pollFeature;
+    @Autowired
+    @Qualifier("pollFeature")
+    private PollFeature realPollFeature;
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -381,6 +386,32 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
             assertNotNull(completed.getCertificateRequestUuid(), "the CRMF is attached to the registration");
             assertNotNull(completed.getProtocolAssociation(), "the completion is attributed to CMP");
             assertEquals(CertificateProtocol.CMP, completed.getProtocolAssociation().getProtocol());
+        });
+    }
+
+    @Test
+    void matchingEnrolmentAnswersOverTheProtocolWhenThePollReadsTheDatabase() throws Exception {
+        Certificate registration = seedRegistration(SUBJECT_DN, Map.of("dNSName", List.of("device-1.example")),
+                CertificateState.REGISTERED);
+        // The real poll re-reads the certificate inside the request transaction. Nothing issues it here, so the
+        // budget is shortened and the enrolment is expected to be accepted as pending, over the protocol.
+        given(pollFeature.pollCertificate(any(), any(), any(), any()))
+                .willAnswer(invocation -> realPollFeature
+                        .pollCertificate(invocation.getArgument(0), invocation.getArgument(1),
+                                invocation.getArgument(2), invocation.getArgument(3)));
+        Object budget = ReflectionTestUtils.getField(realPollFeature, "pollFeatureTimeout");
+        ReflectionTestUtils.setField(realPollFeature, "pollFeatureTimeout", 1);
+        try {
+            ResponseEntity<byte[]> response = post(
+                    irMessage(SUBJECT_DN, List.of("device-1.example"), CHALLENGE, registration.getUuid()));
+
+            assertEquals(PKIBody.TYPE_INIT_REP, PKIMessage.getInstance(response.getBody()).getBody().getType());
+        } finally {
+            ReflectionTestUtils.setField(realPollFeature, "pollFeatureTimeout", budget);
+        }
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Certificate completed = certificateRepository.findByUuid(registration.getUuid()).orElseThrow();
+            assertNotNull(completed.getProtocolAssociation(), "the completion is attributed to CMP");
         });
     }
 

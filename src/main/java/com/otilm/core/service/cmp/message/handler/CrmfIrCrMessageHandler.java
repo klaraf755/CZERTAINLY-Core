@@ -17,9 +17,9 @@ import com.otilm.core.dao.entity.Certificate;
 import com.otilm.core.dao.entity.RaProfile;
 import com.otilm.core.model.auth.CertificateProtocolInfo;
 import com.otilm.core.security.authz.SecuredParentUUID;
-import com.otilm.core.service.CertificateInternalService;
 import com.otilm.core.service.cmp.configurations.ConfigurationContext;
 import com.otilm.core.service.cmp.message.PkiMessageDumper;
+import com.otilm.core.service.cmp.registration.CmpRegistrationAttributionWriter;
 import com.otilm.core.service.cmp.registration.CmpRegistrationIdentityVerifier;
 import com.otilm.core.service.cmp.registration.CmpRegistrationResolver;
 import com.otilm.core.service.v2.ClientOperationExternalService;
@@ -69,7 +69,7 @@ public class CrmfIrCrMessageHandler implements MessageHandler<ClientCertificateD
     private ClientOperationInternalService clientOperationService;
     private ClientOperationExternalService clientOperationExternalService;
     private CmpRegistrationIdentityVerifier registrationIdentityVerifier;
-    private CertificateInternalService certificateService;
+    private CmpRegistrationAttributionWriter registrationAttributionWriter;
 
     @Autowired
     public void setClientOperationService(ClientOperationInternalService clientOperationService) {
@@ -77,8 +77,8 @@ public class CrmfIrCrMessageHandler implements MessageHandler<ClientCertificateD
     }
 
     @Autowired
-    public void setCertificateService(CertificateInternalService certificateService) {
-        this.certificateService = certificateService;
+    public void setRegistrationAttributionWriter(CmpRegistrationAttributionWriter registrationAttributionWriter) {
+        this.registrationAttributionWriter = registrationAttributionWriter;
     }
 
     @Autowired
@@ -179,13 +179,13 @@ public class CrmfIrCrMessageHandler implements MessageHandler<ClientCertificateD
 
     /**
      * The completion is committed and its ISSUE action enqueued, so an association failure must not fail the enrolment
-     * (the registration would no longer match a retry). Best-effort, logged.
+     * (the registration would no longer match a retry). Best-effort, logged. Written in its own transaction, so the row
+     * is committed before the poll re-reads the certificate and survives a rollback of this request.
      */
     private void applyProtocolAssociationBestEffort(Certificate matched, ConfigurationContext configuration) {
         try {
-            certificateService
-                    .applyProtocolAssociations(matched.getUuid(),
-                            CertificateProtocolInfo.Cmp(configuration.getCmpProfile().getUuid()));
+            registrationAttributionWriter
+                    .recordProtocolAttribution(matched.getUuid(), configuration.getCmpProfile().getUuid());
         } catch (Exception e) {
             logger
                     .warn("Failed to apply CMP protocol associations to completed registration {}: {}",
