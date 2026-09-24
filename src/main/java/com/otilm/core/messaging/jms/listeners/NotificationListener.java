@@ -72,6 +72,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -510,7 +511,7 @@ public class NotificationListener implements MessageProcessor<NotificationMessag
 
     // The host object's name is not guaranteed; its UUID still tells two notifications apart
     private static String hostObjectLabel(CommentEventData data) {
-        return data.getObjectName() == null ? uuidText(data.getObjectUuid()) : data.getObjectName();
+        return StringUtils.isBlank(data.getObjectName()) ? uuidText(data.getObjectUuid()) : data.getObjectName();
     }
 
     private static String uuidText(UUID uuid) {
