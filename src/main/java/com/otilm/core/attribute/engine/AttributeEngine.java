@@ -891,49 +891,55 @@ public class AttributeEngine {
      */
     private static void checkExtensionValue(String value, List<String> extensionOids, String label,
             List<ValidationError> errors) {
+        JsonNode written = JerCodec.tryParse(value).orElse(null);
+        if (written == null) {
+            // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
+            return;
+        }
         for (String extensionOid : extensionOids) {
-            String structuredTarget = StructuredExtensionCodec.structuredTargetName(extensionOid);
-            JsonNode written = JerCodec.tryParse(value).orElse(null);
-            if (structuredTarget != null && written != null) {
-                // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain
-                // a second, weaker way in. The typed target takes its values from a closed vocabulary, so it
-                // cannot express a malformed one.
-                errors
-                        .add(ValidationError
-                                .create("Extension value of attribute {} cannot be written here: extension {} has the {} mapping target, which is the only way to set it",
-                                        label, extensionOid, structuredTarget));
-                continue;
-            }
-            if (written == null) {
-                // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
-                continue;
-            }
-            ExtensionType type;
-            try {
-                type = ExtensionTypes.resolve(extensionOid).orElse(null);
-            } catch (ValidationException e) {
-                // A module written straight into the database, or saved before the reader tightened, must not
-                // turn every request for this extension into a 500. The cause is logged for whoever has to tell
-                // malformed stored data from a defect; the operator's message cannot say which.
-                logger.warn("Registered ASN.1 module for extension {} could not be read", extensionOid, e);
-                errors
-                        .add(ValidationError
-                                .create("Extension value of attribute {} cannot be checked: the registered ASN.1 module for extension {} is not readable",
-                                        label, extensionOid));
-                continue;
-            }
-            if (type == null) {
-                errors
-                        .add(ValidationError
-                                .create("Extension value of attribute {}: extension {} has no registered ASN.1 module, so its value must be base64-encoded DER",
-                                        label, extensionOid));
-                continue;
-            }
-            try {
-                JerCodec.encode(written, type);
-            } catch (ValidationException e) {
-                errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
-            }
+            checkWrittenValue(written, extensionOid, label, errors);
+        }
+    }
+
+    /** One written value against one mapped OID; the first reason it cannot be accepted is the one reported. */
+    private static void checkWrittenValue(JsonNode written, String extensionOid, String label,
+            List<ValidationError> errors) {
+        String structuredTarget = StructuredExtensionCodec.structuredTargetName(extensionOid);
+        if (structuredTarget != null) {
+            // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain
+            // a second, weaker way in. The typed target takes its values from a closed vocabulary, so it
+            // cannot express a malformed one.
+            errors
+                    .add(ValidationError
+                            .create("Extension value of attribute {} cannot be written here: extension {} has the {} mapping target, which is the only way to set it",
+                                    label, extensionOid, structuredTarget));
+            return;
+        }
+        ExtensionType type;
+        try {
+            type = ExtensionTypes.resolve(extensionOid).orElse(null);
+        } catch (ValidationException e) {
+            // A module written straight into the database, or saved before the reader tightened, must not
+            // turn every request for this extension into a 500. The cause is logged for whoever has to tell
+            // malformed stored data from a defect; the operator's message cannot say which.
+            logger.warn("Registered ASN.1 module for extension {} could not be read", extensionOid, e);
+            errors
+                    .add(ValidationError
+                            .create("Extension value of attribute {} cannot be checked: the registered ASN.1 module for extension {} is not readable",
+                                    label, extensionOid));
+            return;
+        }
+        if (type == null) {
+            errors
+                    .add(ValidationError
+                            .create("Extension value of attribute {}: extension {} has no registered ASN.1 module, so its value must be base64-encoded DER",
+                                    label, extensionOid));
+            return;
+        }
+        try {
+            JerCodec.encode(written, type);
+        } catch (ValidationException e) {
+            errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
         }
     }
 

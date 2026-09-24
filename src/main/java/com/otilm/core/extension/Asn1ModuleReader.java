@@ -57,10 +57,19 @@ public final class Asn1ModuleReader {
     private final Map<String, Node> assignments = new LinkedHashMap<>();
     private String rootName;
 
+    private enum Kind {
+        SCALAR,
+        OPAQUE,
+        REFERENCE,
+        REPEATED,
+        CHOICE,
+        STRUCTURE
+    }
+
     /** The parse tree, before type references are resolved. */
     private static final class Node {
 
-        private String kind;
+        private Kind kind;
         private Primitive primitive;
         private String reference;
         private List<Node> members;
@@ -101,32 +110,41 @@ public final class Asn1ModuleReader {
         for (String line : module.split("\n")) {
             int comment = line.indexOf("--");
             String text = comment < 0 ? line : line.substring(0, comment);
-            for (int i = 0; i < text.length(); i++) {
+            int i = 0;
+            while (i < text.length()) {
                 char ch = text.charAt(i);
                 if (Character.isLetterOrDigit(ch) || ch == '-' || ch == '_') {
                     word.append(ch);
-                    continue;
-                }
-                flush(word);
-                if (ch == '.' && text.startsWith("...", i)) {
-                    tokens.add("...");
-                    i += 2;
-                } else if (ch == '.' && text.startsWith("..", i)) {
-                    tokens.add("..");
                     i++;
-                } else if (ch == ':' && text.startsWith("::=", i)) {
-                    tokens.add("::=");
-                    i += 2;
-                } else if (!Character.isWhitespace(ch)) {
-                    tokens.add(String.valueOf(ch));
+                } else {
+                    flush(word);
+                    String symbol = symbolAt(text, i);
+                    if (symbol != null) {
+                        tokens.add(symbol);
+                    }
+                    i += symbol == null ? 1 : symbol.length();
                 }
             }
             flush(word);
         }
     }
 
+    /**
+     * The punctuation token starting at {@code i}: one of the multi-character symbols, a single character, or nothing
+     * for whitespace.
+     */
+    private static String symbolAt(String text, int i) {
+        for (String multi : List.of("...", "..", "::=")) {
+            if (text.startsWith(multi, i)) {
+                return multi;
+            }
+        }
+        char ch = text.charAt(i);
+        return Character.isWhitespace(ch) ? null : String.valueOf(ch);
+    }
+
     private void flush(StringBuilder word) {
-        if (word.length() > 0) {
+        if (!word.isEmpty()) {
             tokens.add(word.toString());
             word.setLength(0);
         }
@@ -213,22 +231,22 @@ public final class Asn1ModuleReader {
         switch (token) {
             case "SEQUENCE", "SET" -> collection(node, token.equals("SET"));
             case "CHOICE" -> {
-                node.kind = "choice";
+                node.kind = Kind.CHOICE;
                 node.members = members();
             }
             case "OCTET" -> {
                 require("STRING");
-                node.kind = "scalar";
+                node.kind = Kind.SCALAR;
                 node.primitive = Primitive.OCTET_STRING;
             }
             case "BIT" -> {
                 require("STRING");
-                node.kind = "scalar";
+                node.kind = Kind.SCALAR;
                 node.primitive = Primitive.BIT_STRING;
             }
             case "OBJECT" -> {
                 require("IDENTIFIER");
-                node.kind = "scalar";
+                node.kind = Kind.SCALAR;
                 node.primitive = Primitive.OID;
             }
             case "ANY" -> {
@@ -236,7 +254,7 @@ public final class Asn1ModuleReader {
                     require("BY");
                     take();
                 }
-                node.kind = "opaque";
+                node.kind = Kind.OPAQUE;
                 node.reference = "ANY";
             }
             default -> named(node, token);
@@ -258,7 +276,7 @@ public final class Asn1ModuleReader {
      * exactly that to keep the rules RFC 5280 states in prose.
      */
     private void componentConstraint(Node node) {
-        if (!"structure".equals(node.kind)) {
+        if (node.kind != Kind.STRUCTURE && node.kind != Kind.REFERENCE) {
             throw new ValidationException(
                     "The extension's ASN.1 module applies WITH COMPONENTS to something other than a SEQUENCE or SET");
         }
@@ -301,7 +319,7 @@ public final class Asn1ModuleReader {
     private void named(Node node, String token) {
         Primitive builtIn = BUILT_IN.get(token);
         if (builtIn != null) {
-            node.kind = "scalar";
+            node.kind = Kind.SCALAR;
             node.primitive = builtIn;
             return;
         }
@@ -309,7 +327,7 @@ public final class Asn1ModuleReader {
             throw new ValidationException(
                     "The extension's ASN.1 module uses '%s', which this platform does not support".formatted(token));
         }
-        node.kind = "reference";
+        node.kind = Kind.REFERENCE;
         node.reference = token;
     }
 
@@ -319,11 +337,11 @@ public final class Asn1ModuleReader {
             constraint(node);
         }
         if (accept("OF")) {
-            node.kind = "repeated";
+            node.kind = Kind.REPEATED;
             node.element = type();
             return;
         }
-        node.kind = "structure";
+        node.kind = Kind.STRUCTURE;
         node.members = members();
     }
 
@@ -404,7 +422,8 @@ public final class Asn1ModuleReader {
         List<Range> ranges = new ArrayList<>();
         do {
             BigInteger low = bound(take());
-            ranges.add(accept("..") ? new Range(low, bound(take())) : new Range(low, low));
+            BigInteger high = accept("..") ? bound(take()) : low;
+            ranges.add(new Range(low, high));
         } while (accept("|"));
         require(")");
         if (!bare && size) {
@@ -432,19 +451,17 @@ public final class Asn1ModuleReader {
     // ---------- resolution ----------
 
     private ExtensionType resolve(Node node, Node memberContext, Deque<String> inProgress) {
-        if (node.kind.equals("reference")) {
-            return resolveReference(node, memberContext, inProgress);
-        }
         return switch (node.kind) {
-            case "scalar" -> new Scalar(node.primitive, node.valueRanges, node.sizes);
-            case "opaque" -> new Opaque(node.reference);
-            case "repeated" -> new Repeated(resolve(node.element, null, inProgress), node.set, node.sizes);
-            case "choice" -> {
+            case REFERENCE -> resolveReference(node, memberContext, inProgress);
+            case SCALAR -> new Scalar(node.primitive, node.valueRanges, node.sizes);
+            case OPAQUE -> new Opaque(node.reference);
+            case REPEATED -> new Repeated(resolve(node.element, null, inProgress), node.set, node.sizes);
+            case CHOICE -> {
                 List<Member> alternatives = memberList(node, inProgress);
                 requireDistinctAlternatives(alternatives);
                 yield new Choice(alternatives);
             }
-            case "structure" -> {
+            case STRUCTURE -> {
                 List<Member> members = memberList(node, inProgress);
                 if (node.set) {
                     // X.680 27.3: every member of a SET must carry a distinct tag - DER sorts them by tag, so the
@@ -456,7 +473,6 @@ public final class Asn1ModuleReader {
                 requireKnownComponents(node.componentAlternatives, members);
                 yield new Structure(members, node.set, node.componentAlternatives);
             }
-            default -> throw new IllegalStateException("unreachable kind " + node.kind);
         };
     }
 
@@ -479,10 +495,86 @@ public final class Asn1ModuleReader {
         }
         inProgress.push(node.reference);
         try {
-            return resolve(target, memberContext, inProgress);
+            return constrain(resolve(target, memberContext, inProgress), node);
         } finally {
             inProgress.pop();
         }
+    }
+
+    /**
+     * A constraint written on a reference narrows the type it names: {@code Count (1..3)} with {@code Count ::=
+     * INTEGER} admits 1 to 3. Where both the reference and the definition constrain the same thing, the value must
+     * satisfy both, which for ranges is their intersection. A constraint the named type cannot carry is refused rather
+     * than dropped.
+     */
+    private static ExtensionType constrain(ExtensionType resolved, Node reference) {
+        boolean ranges = !reference.valueRanges.isEmpty();
+        boolean sizes = !reference.sizes.isEmpty();
+        boolean components = !reference.componentAlternatives.isEmpty();
+        if (!ranges && !sizes && !components) {
+            return resolved;
+        }
+        String name = reference.reference;
+        return switch (resolved) {
+            case Scalar scalar -> {
+                refuseIf(components, name, "WITH COMPONENTS");
+                yield new Scalar(scalar.primitive(), intersect(scalar.valueRanges(), reference.valueRanges, name),
+                        intersect(scalar.sizes(), reference.sizes, name));
+            }
+            case Repeated repeated -> {
+                refuseIf(ranges || components, name, "a value range or WITH COMPONENTS");
+                yield new Repeated(repeated.element(), repeated.set(),
+                        intersect(repeated.sizes(), reference.sizes, name));
+            }
+            case Structure structure -> {
+                refuseIf(ranges || sizes, name, "a value range or SIZE");
+                if (!structure.componentAlternatives().isEmpty()) {
+                    throw new ValidationException(("The extension's ASN.1 module constrains '%s' with WITH COMPONENTS "
+                            + "on both its definition and a reference to it; state the constraint once")
+                            .formatted(name));
+                }
+                requireKnownComponents(reference.componentAlternatives, structure.members());
+                yield new Structure(structure.members(), structure.set(), reference.componentAlternatives);
+            }
+            case Choice ignored -> throw constraintRefusal(name, "a constraint; constrain its alternatives instead");
+            case Opaque ignored -> throw constraintRefusal(name, "a constraint; it is not defined here");
+        };
+    }
+
+    private static void refuseIf(boolean condition, String name, String what) {
+        if (condition) {
+            throw constraintRefusal(name, what);
+        }
+    }
+
+    private static ValidationException constraintRefusal(String name, String what) {
+        return new ValidationException(
+                "The extension's ASN.1 module applies %s to '%s', which that type cannot carry".formatted(what, name));
+    }
+
+    /** Both constraints must hold, so the admitted values are those in some range of each: the pairwise overlaps. */
+    private static List<Range> intersect(List<Range> definition, List<Range> reference, String name) {
+        if (definition.isEmpty()) {
+            return reference;
+        }
+        if (reference.isEmpty()) {
+            return definition;
+        }
+        List<Range> out = new ArrayList<>();
+        for (Range a : definition) {
+            for (Range b : reference) {
+                BigInteger min = a.min() == null ? b.min() : b.min() == null ? a.min() : a.min().max(b.min());
+                BigInteger max = a.max() == null ? b.max() : b.max() == null ? a.max() : a.max().min(b.max());
+                if (min == null || max == null || min.compareTo(max) <= 0) {
+                    out.add(new Range(min, max));
+                }
+            }
+        }
+        if (out.isEmpty()) {
+            throw new ValidationException(
+                    "The extension's ASN.1 module constrains '%s' to a range that admits no value".formatted(name));
+        }
+        return List.copyOf(out);
     }
 
     private List<Member> memberList(Node node, Deque<String> inProgress) {
@@ -572,8 +664,8 @@ public final class Asn1ModuleReader {
     private static Set<String> leadingTags(ExtensionType type) {
         return switch (type) {
             case Opaque ignored -> Set.of(ANY_TAG);
-            case Structure structure -> Set.of(structure.set() ? "universal:17" : "universal:16");
-            case Repeated repeated -> Set.of(repeated.set() ? "universal:17" : "universal:16");
+            case Structure(var members, var set, var alternatives) -> Set.of(set ? "universal:17" : "universal:16");
+            case Repeated(var element, var set, var sizes) -> Set.of(set ? "universal:17" : "universal:16");
             case Choice choice -> {
                 Set<String> all = new HashSet<>();
                 choice.alternatives().forEach(alternative -> all.addAll(leadingTags(alternative)));

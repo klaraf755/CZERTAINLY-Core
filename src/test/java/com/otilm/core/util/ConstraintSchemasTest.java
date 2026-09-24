@@ -1,6 +1,5 @@
 package com.otilm.core.util;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.core.oid.OidCategory;
 import com.otilm.core.oid.OidHandler;
@@ -17,8 +16,6 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConstraintSchemasTest {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     // The OidHandler cache is process-wide static state shared across the whole test JVM.
     // Snapshot CERTIFICATE_EXTENSION before this class replaces it; restore it afterwards.

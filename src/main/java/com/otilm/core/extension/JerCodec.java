@@ -3,7 +3,6 @@ package com.otilm.core.extension;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
@@ -66,7 +65,8 @@ public final class JerCodec {
      * discarded, and a repeated key collapses to the last, so a value would encode something other than what was
      * written.
      */
-    private static final ObjectReader STRICT_READER = ((ObjectMapper) ObjectMapperFactory.wire())
+    private static final ObjectReader STRICT_READER = ObjectMapperFactory
+            .wire()
             .reader()
             .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
@@ -92,20 +92,38 @@ public final class JerCodec {
     }
 
     /**
-     * The value as JSON when it was written out, or empty when it was handed over as base64 DER. The two are told apart
-     * by parsing, not by peeking at a character: a base64 string is a run of letters, digits, {@code +}, {@code /} and
-     * {@code =}, and no such run of more than a few characters is a complete JSON value - a leading digit is followed
-     * by letters the JSON grammar has no place for. The one overlap, a string of digits only, decodes to bytes whose
-     * second byte would have to be a DER length longer than the blob itself.
+     * The value as JSON when it was written out, or empty when it was handed over as base64 DER.
+     *
+     * <p>
+     * The two grammars overlap in exactly one place: a string of digits is a JSON number and may also be base64. Almost
+     * always it is base64 of nothing - the second byte would be a DER length longer than the blob - but a long enough
+     * run can decode to a complete DER value under a private-class tag. So the rule is DER-first where both readings
+     * exist: a number that is also complete DER when read as base64 is bytes, the form that predates this feature.
+     * Everything else that parses as JSON is written; base64 of any length otherwise contains characters JSON cannot
+     * follow a digit with, and never parses.
      */
     public static Optional<JsonNode> tryParse(String value) {
         if (value == null || value.isBlank()) {
             return Optional.empty();
         }
+        JsonNode parsed;
         try {
-            return Optional.ofNullable(STRICT_READER.readTree(value));
+            parsed = STRICT_READER.readTree(value);
         } catch (IOException e) {
             return Optional.empty();
+        }
+        if (parsed == null || parsed.isNumber() && isCompleteDer(value.strip())) {
+            return Optional.empty();
+        }
+        return Optional.of(parsed);
+    }
+
+    /** Whether {@code candidate} is base64 of exactly one complete DER value, with nothing after it. */
+    private static boolean isCompleteDer(String candidate) {
+        try {
+            return ASN1Primitive.fromByteArray(java.util.Base64.getDecoder().decode(candidate)) != null;
+        } catch (IllegalArgumentException | IOException e) {
+            return false;
         }
     }
 
@@ -159,14 +177,11 @@ public final class JerCodec {
                 // Absent means absent. A written null is not: it is the JER value of ASN.1 NULL, and for any
                 // other type it is a wrong value the type's own check names.
                 requirePresent(member, path);
-                continue;
+            } else if (!isDefault(written, member)) {
+                // A member written as its DEFAULT is left out, as DER requires; accepting it and omitting it is
+                // kinder than refusing, since the author said what they meant.
+                members.add(tagged(encodable(written, member.type(), path + "." + member.name()), member));
             }
-            if (isDefault(written, member)) {
-                // DER forbids encoding a DEFAULT value, so writing one means leaving the member out. Accepting
-                // it and omitting it is kinder than refusing: the author said what they meant.
-                continue;
-            }
-            members.add(tagged(encodable(written, member.type(), path + "." + member.name()), member));
         }
         requireComponentAlternatives(value, type, path);
         return type.set() ? new DERSet(members) : new DERSequence(members);

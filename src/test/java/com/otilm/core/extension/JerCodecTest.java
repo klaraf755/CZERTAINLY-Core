@@ -36,7 +36,7 @@ class JerCodecTest {
         return HexFormat.of().formatHex(JerCodec.encode(value, type)).toUpperCase();
     }
 
-    // BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER (0..MAX) OPTIONAL }
+    // RFC 5280 Basic Constraints: cA defaulting to FALSE, then an optional non-negative path length.
     private static final Structure BASIC_CONSTRAINTS = new Structure(List
             .of(new Member("cA", of(Primitive.BOOLEAN), null, false, false, Boolean.FALSE),
                     new Member(
@@ -154,8 +154,9 @@ class JerCodecTest {
         @Test
         void tooManyElementsForTheModulesSize() {
             String scopes = "{\"name\":\"a\"},".repeat(9);
-            assertThatThrownBy(() -> der("{\"serviceId\":\"svc-x\",\"tier\":1,\"scopes\":["
-                    + scopes.substring(0, scopes.length() - 1) + "]}", SERVICE_ENTITLEMENT))
+            String value = "{\"serviceId\":\"svc-x\",\"tier\":1,\"scopes\":[" + scopes.substring(0, scopes.length() - 1)
+                    + "]}";
+            assertThatThrownBy(() -> der(value, SERVICE_ENTITLEMENT))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("$.scopes")
                     .hasMessageContaining("9 elements");
@@ -193,6 +194,19 @@ class JerCodecTest {
                     .of("{\"a\":1}", "[1]", "\"010203\"", "5", "-1", "true", "false", "null", "  {\"a\":1}", "\n[1]")) {
                 assertThat(JerCodec.looksWritten(value)).as(value).isTrue();
             }
+        }
+
+        @Test
+        void aNumberThatIsAlsoCompleteDerIsBytes() {
+            // 108 digits: a JSON integer, and base64 of 81 bytes that are a complete private-class DER value
+            // (D7 4F + 79 content bytes). Where both readings exist, the bytes reading wins - it predates this
+            // feature. A number that is not complete DER stays a number: 1234 decodes to a length its bytes cannot
+            // fill,
+            // and a complete value followed by anything is not one value.
+            String bothReadings = "108" + "0".repeat(105);
+            assertThat(JerCodec.tryParse(bothReadings)).isEmpty();
+            assertThat(JerCodec.tryParse("1234")).isPresent();
+            assertThat(JerCodec.tryParse(bothReadings + "0000")).isPresent();
         }
 
         @Test

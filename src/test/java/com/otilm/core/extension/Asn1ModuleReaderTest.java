@@ -5,6 +5,7 @@ import com.otilm.core.extension.ExtensionType.Choice;
 import com.otilm.core.extension.ExtensionType.Member;
 import com.otilm.core.extension.ExtensionType.Opaque;
 import com.otilm.core.extension.ExtensionType.Primitive;
+import com.otilm.core.extension.ExtensionType.Range;
 import com.otilm.core.extension.ExtensionType.Repeated;
 import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
@@ -312,6 +313,56 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aConstraintOnAReferenceNarrowsTheTypeItNames() throws Exception {
+            // Ext ::= Count (1..3) with Count ::= INTEGER admits 1 to 3; the range was being dropped with the
+            // reference.
+            ExtensionType type = read("Ext ::= Count (1..3)\nCount ::= INTEGER");
+
+            assertThat(encode("2", type)).isEqualTo("020102");
+            assertThatThrownBy(() -> encode("4", type))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("permitted range");
+        }
+
+        @Test
+        void constraintsOnBothSidesIntersect() throws Exception {
+            ExtensionType type = read("Ext ::= Count (5..20)\nCount ::= INTEGER (0..10)");
+
+            assertThat(((Scalar) type).valueRanges()).containsExactly(Range.of(5, 10));
+            assertThat(encode("7", type)).isEqualTo("020107");
+            for (String outside : List.of("3", "12")) {
+                assertThatThrownBy(() -> encode(outside, type)).as(outside).isInstanceOf(ValidationException.class);
+            }
+        }
+
+        @Test
+        void anEmptyIntersectionIsRefusedAtRegistration() {
+            assertThatThrownBy(() -> read("Ext ::= Count (11..20)\nCount ::= INTEGER (0..10)"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("admits no value");
+        }
+
+        @Test
+        void aComponentConstraintMayBeWrittenOnAReferenceToAStructure() throws Exception {
+            ExtensionType type = read("""
+                    Ext ::= Base (WITH COMPONENTS { ..., a PRESENT })
+                    Base ::= SEQUENCE { a [0] INTEGER OPTIONAL, b [1] INTEGER OPTIONAL }""");
+
+            assertThat(encode("{\"a\":1}", type)).isEqualTo("3003800101");
+            assertThatThrownBy(() -> encode("{\"b\":1}", type)).isInstanceOf(ValidationException.class);
+        }
+
+        @Test
+        void aConstraintTheNamedTypeCannotCarryIsRefused() {
+            assertThatThrownBy(() -> read("Ext ::= Alt (1..3)\nAlt ::= CHOICE { x IA5String, y INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'Alt'");
+            assertThatThrownBy(() -> read("Ext ::= Base (SIZE (1..2))\nBase ::= SEQUENCE { a INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'Base'");
+        }
+
+        @Test
         void aValueUnionOnAnIntegerIsKept() throws Exception {
             ExtensionType type = read("T ::= INTEGER (1 | 3)");
 
@@ -370,10 +421,12 @@ class Asn1ModuleReaderTest {
             // Each level names the next twice, so resolving the chain doubles at every step.
             StringBuilder module = new StringBuilder("T0 ::= SEQUENCE { a T1, b T1 }\n");
             for (int i = 1; i < 20; i++) {
-                module.append("T%d ::= SEQUENCE { a [0] T%d, b [1] T%d }\n".formatted(i, i + 1, i + 1));
+                int next = i + 1;
+                module.append("T" + i + " ::= SEQUENCE { a [0] T" + next + ", b [1] T" + next + " }\n");
             }
             module.append("T20 ::= INTEGER");
-            assertThatThrownBy(() -> read(module.toString()))
+            String text = module.toString();
+            assertThatThrownBy(() -> read(text))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("more than");
         }

@@ -8,7 +8,6 @@ import com.otilm.core.util.StructuredExtensionCodec;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,12 +39,12 @@ class ShippedExtensionModuleTest {
                 .filter(oid -> StructuredExtensionCodec.structuredTargetName(oid.getOid()) == null)
                 .toList();
 
-        assertThat(extensions).isNotEmpty();
         assertThat(extensions)
+                .isNotEmpty()
                 .allSatisfy(oid -> assertThat(ExtensionTypes.shippedModule(oid.getOid()))
                         .as("module for %s (%s)", oid.getOid(), oid.name())
-                        .isPresent());
-        assertThat(extensions).allSatisfy(oid -> assertThat(type(oid.getOid())).isNotNull());
+                        .isPresent())
+                .allSatisfy(oid -> assertThat(type(oid.getOid())).isNotNull());
     }
 
     @Test
@@ -57,7 +56,7 @@ class ShippedExtensionModuleTest {
 
     @Test
     void anUndescribedOidResolvesToNothing() {
-        assertThat(ExtensionTypes.shippedModule("1.3.6.1.4.1.99999.8.1")).isEqualTo(Optional.empty());
+        assertThat(ExtensionTypes.shippedModule("1.3.6.1.4.1.99999.8.1")).isEmpty();
     }
 
     @Test

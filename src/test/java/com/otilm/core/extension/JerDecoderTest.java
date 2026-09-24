@@ -1,7 +1,6 @@
 package com.otilm.core.extension;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
 import com.otilm.core.extension.ExtensionType.Member;
@@ -20,8 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JerDecoderTest {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static Scalar of(Primitive primitive) {
         return new Scalar(primitive);
@@ -54,21 +51,20 @@ class JerDecoderTest {
 
     @Test
     void readsBasicConstraints() {
-        assertThat(decode("30060101FF020100", BASIC_CONSTRAINTS).toString())
-                .isEqualTo("{\"cA\":true,\"pathLenConstraint\":0}");
+        assertThat(decode("30060101FF020100", BASIC_CONSTRAINTS)).hasToString("{\"cA\":true,\"pathLenConstraint\":0}");
     }
 
     @Test
     void anOmittedDefaultComesBackAsItsDefault() {
         // A reader wants the extension's effective content, not a transcript of which octets were present.
-        assertThat(decode("3000", BASIC_CONSTRAINTS).toString()).isEqualTo("{\"cA\":false}");
+        assertThat(decode("3000", BASIC_CONSTRAINTS)).hasToString("{\"cA\":false}");
     }
 
     @Test
     void readsEveryMemberOfTheWorkedExample() {
         assertThat(decode("30350C0B7376632D62696C6C696E670201013012160472656164060A2B06010401868D1F0201"
-                + "800F32303237313233313233353935395A", SERVICE_ENTITLEMENT).toString())
-                .isEqualTo("{\"serviceId\":\"svc-billing\",\"tier\":1,"
+                + "800F32303237313233313233353935395A", SERVICE_ENTITLEMENT))
+                .hasToString("{\"serviceId\":\"svc-billing\",\"tier\":1,"
                         + "\"scopes\":[{\"name\":\"read\"},{\"id\":\"1.3.6.1.4.1.99999.2.1\"}],"
                         + "\"expires\":\"20271231235959Z\"}");
     }
@@ -77,10 +73,10 @@ class JerDecoderTest {
     void tellsTwoIdenticallyTypedOptionalMembersApartByTheirTags() {
         // The only thing distinguishing notBefore from notAfter is the context tag; without the type this
         // encoding could be either.
-        assertThat(decode("3011810F32303237313233313233353935395A", PKUP).toString())
-                .isEqualTo("{\"notAfter\":\"20271231235959Z\"}");
-        assertThat(decode("3011800F32303237313233313233353935395A", PKUP).toString())
-                .isEqualTo("{\"notBefore\":\"20271231235959Z\"}");
+        assertThat(decode("3011810F32303237313233313233353935395A", PKUP))
+                .hasToString("{\"notAfter\":\"20271231235959Z\"}");
+        assertThat(decode("3011800F32303237313233313233353935395A", PKUP))
+                .hasToString("{\"notBefore\":\"20271231235959Z\"}");
     }
 
     @Test
@@ -88,8 +84,8 @@ class JerDecoderTest {
         Structure withAny = new Structure(
                 List.of(new Member("type", of(Primitive.OID)), new Member("value", new Opaque("AttributeValue"))));
 
-        assertThat(decode("300A06022A030C0474657374", withAny).toString())
-                .isEqualTo("{\"type\":\"1.2.3\",\"value\":\"0C0474657374\"}");
+        assertThat(decode("300A06022A030C0474657374", withAny))
+                .hasToString("{\"type\":\"1.2.3\",\"value\":\"0C0474657374\"}");
     }
 
     @Test
@@ -104,8 +100,7 @@ class JerDecoderTest {
     void anOmittedDefaultBeforeAPresentMemberStillAligns() {
         // SEQUENCE { INTEGER 1 } is a path length with cA defaulted away, not a malformed cA. Keeping the
         // members aligned across an omission is the whole job of matching on type rather than on position.
-        assertThat(decode("3003020101", BASIC_CONSTRAINTS).toString())
-                .isEqualTo("{\"cA\":false,\"pathLenConstraint\":1}");
+        assertThat(decode("3003020101", BASIC_CONSTRAINTS)).hasToString("{\"cA\":false,\"pathLenConstraint\":1}");
     }
 
     @Test
@@ -143,9 +138,9 @@ class JerDecoderTest {
         // The encoding still records that it is constructed, which is what restores the SEQUENCE.
         Structure withOpaque = new Structure(
                 List.of(new Member("x400Address", new Opaque("ORAddress"), 3, false, false, null)));
-        String der = "3005" + "A303" + "020105"; // [3] IMPLICIT SEQUENCE { INTEGER 5 }
+        String der = "3005" + "A303" + "020105"; // an implicitly tagged 3 around a sequence of the integer 5
 
-        assertThat(decode(der, withOpaque).toString()).isEqualTo("{\"x400Address\":\"3003020105\"}");
+        assertThat(decode(der, withOpaque)).hasToString("{\"x400Address\":\"3003020105\"}");
         roundTrips(der, withOpaque);
     }
 
@@ -153,9 +148,9 @@ class JerDecoderTest {
     void anImplicitlyTaggedOpaquePrimitiveIsReadBackAsOctets() {
         Structure withOpaque = new Structure(
                 List.of(new Member("blob", new Opaque("Anything"), 1, false, false, null)));
-        String der = "3004" + "8102" + "ABCD"; // [1] IMPLICIT OCTET STRING AB CD
+        String der = "3004" + "8102" + "ABCD"; // an implicitly tagged 1 around the octets AB CD
 
-        assertThat(decode(der, withOpaque).toString()).isEqualTo("{\"blob\":\"0402ABCD\"}");
+        assertThat(decode(der, withOpaque)).hasToString("{\"blob\":\"0402ABCD\"}");
         roundTrips(der, withOpaque);
     }
 
@@ -167,7 +162,7 @@ class JerDecoderTest {
                 .of(new Member("u", new Scalar(Primitive.UTF8_STRING), null, false, true, null),
                         new Member("i", new Scalar(Primitive.IA5_STRING))));
 
-        assertThat(decode("3003" + "160161", two).toString()).isEqualTo("{\"i\":\"a\"}");
+        assertThat(decode("3003" + "160161", two)).hasToString("{\"i\":\"a\"}");
     }
 
     @Test
@@ -178,7 +173,7 @@ class JerDecoderTest {
                 List.of(new Member("a", new Scalar(Primitive.INTEGER)), new Member("b", new Scalar(Primitive.BOOLEAN))),
                 true);
 
-        assertThat(decode("3106" + "0101FF" + "020105", set).toString()).isEqualTo("{\"a\":5,\"b\":true}");
+        assertThat(decode("3106" + "0101FF" + "020105", set)).hasToString("{\"a\":5,\"b\":true}");
         roundTrips("31060101FF020105", set);
     }
 }

@@ -149,9 +149,10 @@ public final class JerDecoder {
         return switch (type) {
             case Opaque ignored -> true;
             case Choice choice -> choice.alternatives().stream().anyMatch(alt -> fits(primitive, alt));
-            case Structure structure ->
-                structure.set() ? primitive instanceof ASN1Set : primitive instanceof ASN1Sequence;
-            case Repeated repeated -> repeated.set() ? primitive instanceof ASN1Set : primitive instanceof ASN1Sequence;
+            case Structure(var members, var set, var alternatives) ->
+                set ? primitive instanceof ASN1Set : primitive instanceof ASN1Sequence;
+            case Repeated(var element, var set, var sizes) ->
+                set ? primitive instanceof ASN1Set : primitive instanceof ASN1Sequence;
             case Scalar scalar -> matchesScalar(primitive, scalar);
         };
     }
@@ -203,8 +204,8 @@ public final class JerDecoder {
 
     private static int universalTag(ExtensionType type) {
         return switch (type) {
-            case Structure structure -> structure.set() ? BERTags.SET : BERTags.SEQUENCE;
-            case Repeated repeated -> repeated.set() ? BERTags.SET : BERTags.SEQUENCE;
+            case Structure(var members, var set, var alternatives) -> set ? BERTags.SET : BERTags.SEQUENCE;
+            case Repeated(var element, var set, var sizes) -> set ? BERTags.SET : BERTags.SEQUENCE;
             // A CHOICE cannot be implicitly tagged, and an undescribed member is handled before asking.
             case Choice ignored -> throw new IllegalStateException("a choice is never implicitly tagged");
             case Opaque ignored -> throw new IllegalStateException("resolved from the encoding, not the type");
