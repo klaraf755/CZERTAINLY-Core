@@ -75,7 +75,7 @@ import com.otilm.core.security.authz.SecurityResourceFilter;
 import com.otilm.core.serialization.ObjectMapperFactory;
 import com.otilm.core.util.AttributeDefinitionUtils;
 import com.otilm.core.util.AuthHelper;
-import com.otilm.core.util.ExtensionSchemas;
+import com.otilm.core.util.ConstraintSchemas;
 import com.otilm.core.util.SearchHelper;
 import com.otilm.core.util.SecretEncodingVersion;
 import com.otilm.core.util.SecretsUtil;
@@ -815,7 +815,7 @@ public class AttributeEngine {
                     continue;
                 }
                 try {
-                    ExtensionSchemas.requireValidSchema((String) constraint.getData());
+                    ConstraintSchemas.requireValidSchema((String) constraint.getData());
                 } catch (ValidationException e) {
                     throw new AttributeException(
                             "JSON Schema constraint of attribute '%s': %s"
