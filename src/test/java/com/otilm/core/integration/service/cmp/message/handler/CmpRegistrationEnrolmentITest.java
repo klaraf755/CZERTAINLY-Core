@@ -416,6 +416,19 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     }
 
     @Test
+    void anUnexpectedHandlerFailureIsStillAnsweredAsACmpError() throws Exception {
+        Certificate registration = seedRegistration(SUBJECT_DN, null, CertificateState.REGISTERED);
+        // Thrown inside the handler's transaction, so the request transaction can only roll back.
+        given(pollFeature.pollCertificate(any(), any(), any(), any()))
+                .willThrow(new IllegalStateException("poll broke"));
+
+        ResponseEntity<byte[]> response = post(irMessage(SUBJECT_DN, null, CHALLENGE, registration.getUuid()));
+
+        assertEquals(PKIFailureInfo.systemFailure, failInfo(response.getBody()));
+        assertEquals("CMP request handling failed", failText(response.getBody()));
+    }
+
+    @Test
     void macRevocationIsRejectedNotAuthenticatedByAnEmptySecret() throws Exception {
         // Registration mode stores no shared secret; a MAC-protected revocation must not authenticate against
         // an empty key. It is rejected at protection validation, never reaching the revocation handler.

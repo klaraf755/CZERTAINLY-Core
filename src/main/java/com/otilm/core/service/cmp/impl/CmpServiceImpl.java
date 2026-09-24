@@ -63,7 +63,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.NoTransactionException;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import static com.otilm.core.service.cmp.CmpConstants.HTTP_HEADER_CONTENT_TYPE;
@@ -312,8 +315,27 @@ public class CmpServiceImpl implements CmpExternalService {
                             .unprotectedMessage(pkiRequest.getHeader(), PKIFailureInfo.badDataFormat,
                                     ImplFailureInfo.CMPSRV101));
         } catch (Exception e) {
+            ownDoomedTransaction();
             return errorResponse(tid, logPrefix, requestAsString, "handling", e,
                     safeUnprotectedError(pkiRequest.getHeader(), e));
+        }
+    }
+
+    /**
+     * A runtime failure that crossed a nested transactional collaborator (a message handler) has already marked the
+     * request transaction rollback-only. Left at that, the commit at the boundary throws and the CMP error built here
+     * is replaced by the generic JSON error. Marking the rollback locally makes the boundary roll back quietly and
+     * return the protocol response. A transaction nothing has doomed still commits, keeping the failed-transaction
+     * state the error path records.
+     */
+    private static void ownDoomedTransaction() {
+        try {
+            TransactionStatus status = TransactionAspectSupport.currentTransactionStatus();
+            if (status.isRollbackOnly()) {
+                status.setRollbackOnly();
+            }
+        } catch (NoTransactionException e) {
+            LOG.debug("No active transaction for the failed CMP request");
         }
     }
 
