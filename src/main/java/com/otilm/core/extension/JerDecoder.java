@@ -148,7 +148,7 @@ public final class JerDecoder {
     private static boolean matchesType(ASN1Primitive primitive, ExtensionType type) {
         return switch (type) {
             case Opaque ignored -> true;
-            case Choice choice -> choice.alternatives().stream().anyMatch(alt -> fits(primitive, alt));
+            case Choice(var alternatives) -> alternatives.stream().anyMatch(alt -> fits(primitive, alt));
             case Structure(var members, var set, var alternatives) ->
                 set ? primitive instanceof ASN1Set : primitive instanceof ASN1Sequence;
             case Repeated(var element, var set, var sizes) ->
@@ -209,7 +209,7 @@ public final class JerDecoder {
             // A CHOICE cannot be implicitly tagged, and an undescribed member is handled before asking.
             case Choice ignored -> throw new IllegalStateException("a choice is never implicitly tagged");
             case Opaque ignored -> throw new IllegalStateException("resolved from the encoding, not the type");
-            case Scalar scalar -> switch (scalar.primitive()) {
+            case Scalar(var primitive, var ranges, var sizes) -> switch (primitive) {
                 case BOOLEAN -> BERTags.BOOLEAN;
                 case INTEGER -> BERTags.INTEGER;
                 case OID -> BERTags.OBJECT_IDENTIFIER;

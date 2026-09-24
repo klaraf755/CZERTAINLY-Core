@@ -19,7 +19,9 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.BinaryOperator;
 
 /**
  * Reads the ASN.1 module an operator registers for an extension into the type the platform encodes against.
@@ -516,25 +518,24 @@ public final class Asn1ModuleReader {
         }
         String name = reference.reference;
         return switch (resolved) {
-            case Scalar scalar -> {
+            case Scalar(var primitive, var definedRanges, var definedSizes) -> {
                 refuseIf(components, name, "WITH COMPONENTS");
-                yield new Scalar(scalar.primitive(), intersect(scalar.valueRanges(), reference.valueRanges, name),
-                        intersect(scalar.sizes(), reference.sizes, name));
+                yield new Scalar(primitive, intersect(definedRanges, reference.valueRanges, name),
+                        intersect(definedSizes, reference.sizes, name));
             }
-            case Repeated repeated -> {
+            case Repeated(var element, var set, var definedSizes) -> {
                 refuseIf(ranges || components, name, "a value range or WITH COMPONENTS");
-                yield new Repeated(repeated.element(), repeated.set(),
-                        intersect(repeated.sizes(), reference.sizes, name));
+                yield new Repeated(element, set, intersect(definedSizes, reference.sizes, name));
             }
-            case Structure structure -> {
+            case Structure(var members, var set, var definedAlternatives) -> {
                 refuseIf(ranges || sizes, name, "a value range or SIZE");
-                if (!structure.componentAlternatives().isEmpty()) {
+                if (!definedAlternatives.isEmpty()) {
                     throw new ValidationException(("The extension's ASN.1 module constrains '%s' with WITH COMPONENTS "
                             + "on both its definition and a reference to it; state the constraint once")
                             .formatted(name));
                 }
-                requireKnownComponents(reference.componentAlternatives, structure.members());
-                yield new Structure(structure.members(), structure.set(), reference.componentAlternatives);
+                requireKnownComponents(reference.componentAlternatives, members);
+                yield new Structure(members, set, reference.componentAlternatives);
             }
             case Choice ignored -> throw constraintRefusal(name, "a constraint; constrain its alternatives instead");
             case Opaque ignored -> throw constraintRefusal(name, "a constraint; it is not defined here");
@@ -563,11 +564,7 @@ public final class Asn1ModuleReader {
         List<Range> out = new ArrayList<>();
         for (Range a : definition) {
             for (Range b : reference) {
-                BigInteger min = a.min() == null ? b.min() : b.min() == null ? a.min() : a.min().max(b.min());
-                BigInteger max = a.max() == null ? b.max() : b.max() == null ? a.max() : a.max().min(b.max());
-                if (min == null || max == null || min.compareTo(max) <= 0) {
-                    out.add(new Range(min, max));
-                }
+                overlap(a, b).ifPresent(out::add);
             }
         }
         if (out.isEmpty()) {
@@ -575,6 +572,21 @@ public final class Asn1ModuleReader {
                     "The extension's ASN.1 module constrains '%s' to a range that admits no value".formatted(name));
         }
         return List.copyOf(out);
+    }
+
+    /** The values both ranges admit, or empty when there are none. An absent bound admits everything on its side. */
+    private static Optional<Range> overlap(Range a, Range b) {
+        BigInteger min = tighter(a.min(), b.min(), BigInteger::max);
+        BigInteger max = tighter(a.max(), b.max(), BigInteger::min);
+        boolean admitsSomething = min == null || max == null || min.compareTo(max) <= 0;
+        return admitsSomething ? Optional.of(new Range(min, max)) : Optional.empty();
+    }
+
+    private static BigInteger tighter(BigInteger a, BigInteger b, BinaryOperator<BigInteger> pick) {
+        if (a == null) {
+            return b;
+        }
+        return b == null ? a : pick.apply(a, b);
     }
 
     private List<Member> memberList(Node node, Deque<String> inProgress) {
@@ -666,12 +678,12 @@ public final class Asn1ModuleReader {
             case Opaque ignored -> Set.of(ANY_TAG);
             case Structure(var members, var set, var alternatives) -> Set.of(set ? "universal:17" : "universal:16");
             case Repeated(var element, var set, var sizes) -> Set.of(set ? "universal:17" : "universal:16");
-            case Choice choice -> {
+            case Choice(var alternatives) -> {
                 Set<String> all = new HashSet<>();
-                choice.alternatives().forEach(alternative -> all.addAll(leadingTags(alternative)));
+                alternatives.forEach(alternative -> all.addAll(leadingTags(alternative)));
                 yield all;
             }
-            case Scalar scalar -> Set.of("universal:" + switch (scalar.primitive()) {
+            case Scalar(var primitive, var ranges, var sizes) -> Set.of("universal:" + switch (primitive) {
                 case BOOLEAN -> 1;
                 case INTEGER -> 2;
                 case BIT_STRING -> 3;
