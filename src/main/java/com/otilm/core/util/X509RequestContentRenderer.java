@@ -1,5 +1,6 @@
 package com.otilm.core.util;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.connector.v3.certificate.GeneralNameEntry;
 import com.otilm.api.model.connector.v3.certificate.RdnEntry;
@@ -209,7 +210,8 @@ public final class X509RequestContentRenderer {
      * whether writing one is possible at all, which needs the extension's ASN.1 type.
      */
     private static byte[] derValue(String oid, String value) throws IOException {
-        if (!JerCodec.looksWritten(value)) {
+        JsonNode written = JerCodec.tryParse(value).orElse(null);
+        if (written == null) {
             return decodeBase64Der(value);
         }
         ExtensionType type;
@@ -226,7 +228,7 @@ public final class X509RequestContentRenderer {
                     "Extension " + oid + " has no registered ASN.1 module, so its value must be base64-encoded DER");
         }
         try {
-            return JerCodec.encodeFromString(value, type);
+            return JerCodec.encode(written, type);
         } catch (ValidationException e) {
             // The codec's message is controlled and names the member at fault, so it is worth forwarding.
             throw new IOException("Invalid value for extension " + oid + ": " + e.getMessage(), e);

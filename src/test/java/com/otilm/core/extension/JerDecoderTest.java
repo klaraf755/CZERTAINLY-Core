@@ -169,4 +169,16 @@ class JerDecoderTest {
 
         assertThat(decode("3003" + "160161", two).toString()).isEqualTo("{\"i\":\"a\"}");
     }
+
+    @Test
+    void aSetIsReadByTagWhateverOrderDerPutItsMembersIn() {
+        // SET { a INTEGER, b BOOLEAN } encodes the BOOLEAN first (tag 1 sorts before tag 2); a positional walk
+        // would report a missing.
+        Structure set = new Structure(
+                List.of(new Member("a", new Scalar(Primitive.INTEGER)), new Member("b", new Scalar(Primitive.BOOLEAN))),
+                true);
+
+        assertThat(decode("3106" + "0101FF" + "020105", set).toString()).isEqualTo("{\"a\":5,\"b\":true}");
+        roundTrips("31060101FF020105", set);
+    }
 }

@@ -2,8 +2,10 @@ package com.otilm.core.extension;
 
 import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
+import com.otilm.core.extension.ExtensionType.ComponentRule;
 import com.otilm.core.extension.ExtensionType.Member;
 import com.otilm.core.extension.ExtensionType.Opaque;
+import com.otilm.core.extension.ExtensionType.Presence;
 import com.otilm.core.extension.ExtensionType.Primitive;
 import com.otilm.core.extension.ExtensionType.Range;
 import com.otilm.core.extension.ExtensionType.Repeated;
@@ -66,6 +68,7 @@ public final class Asn1ModuleReader {
         private boolean set;
         private List<Range> valueRanges = List.of();
         private List<Range> sizes = List.of();
+        private List<List<ComponentRule>> componentAlternatives = List.of();
         private String name;
         private Integer tag;
         private Boolean explicit;
@@ -105,7 +108,10 @@ public final class Asn1ModuleReader {
                     continue;
                 }
                 flush(word);
-                if (ch == '.' && text.startsWith("..", i)) {
+                if (ch == '.' && text.startsWith("...", i)) {
+                    tokens.add("...");
+                    i += 2;
+                } else if (ch == '.' && text.startsWith("..", i)) {
                     tokens.add("..");
                     i++;
                 } else if (ch == ':' && text.startsWith("::=", i)) {
@@ -177,6 +183,12 @@ public final class Asn1ModuleReader {
                 rootName = name;
             }
         }
+        require("END");
+        if (at < tokens.size()) {
+            // Text after END is either a second module or a mistake; either way it is not what was registered.
+            throw new ValidationException(
+                    "The extension's ASN.1 module has content after END, beginning '%s'".formatted(peek()));
+        }
     }
 
     private Node type() {
@@ -226,9 +238,60 @@ public final class Asn1ModuleReader {
             default -> named(node, token);
         }
         if (peek().equals("(")) {
-            constraint(node);
+            if (at + 1 < tokens.size() && tokens.get(at + 1).equals("WITH")) {
+                componentConstraint(node);
+            } else {
+                constraint(node);
+            }
         }
         return node;
+    }
+
+    /**
+     * {@code (WITH COMPONENTS { ..., a PRESENT } | WITH COMPONENTS { ..., b (TRUE) })}: alternatives, each a
+     * conjunction of PRESENT, ABSENT or a single value. This is the X.680 way to say what OPTIONAL and DEFAULT alone
+     * cannot - "at least one of these", or "this member only when that one is asserted" - and the shipped modules need
+     * exactly that to keep the rules RFC 5280 states in prose.
+     */
+    private void componentConstraint(Node node) {
+        if (!"structure".equals(node.kind)) {
+            throw new ValidationException(
+                    "The extension's ASN.1 module applies WITH COMPONENTS to something other than a SEQUENCE or SET");
+        }
+        require("(");
+        List<List<ComponentRule>> alternatives = new ArrayList<>();
+        do {
+            require("WITH");
+            require("COMPONENTS");
+            require("{");
+            List<ComponentRule> rules = new ArrayList<>();
+            do {
+                if (accept("...")) {
+                    continue;
+                }
+                String member = take();
+                if (accept("PRESENT")) {
+                    rules.add(new ComponentRule(member, Presence.PRESENT, null));
+                } else if (accept("ABSENT")) {
+                    rules.add(new ComponentRule(member, Presence.ABSENT, null));
+                } else if (accept("(")) {
+                    rules.add(new ComponentRule(member, Presence.EQUALS, literal(take())));
+                    require(")");
+                } else {
+                    throw new ValidationException(("The extension's ASN.1 module constrains component '%s' with "
+                            + "'%s'; only PRESENT, ABSENT or a single value in parentheses are supported")
+                            .formatted(member, peek()));
+                }
+            } while (accept(","));
+            require("}");
+            if (rules.isEmpty()) {
+                throw new ValidationException(
+                        "The extension's ASN.1 module has a WITH COMPONENTS that constrains nothing");
+            }
+            alternatives.add(List.copyOf(rules));
+        } while (accept("|"));
+        require(")");
+        node.componentAlternatives = List.copyOf(alternatives);
     }
 
     private void named(Node node, String token) {
@@ -373,10 +436,15 @@ public final class Asn1ModuleReader {
             }
             case "structure" -> {
                 List<Member> members = memberList(node, inProgress);
-                if (!node.set) {
+                if (node.set) {
+                    // X.680 27.3: every member of a SET must carry a distinct tag - DER sorts them by tag, so the
+                    // tag is the only thing that says which member a component is.
+                    requireDistinctTags(members, "member", "a SET");
+                } else {
                     requireDecodableOptionals(members);
                 }
-                yield new Structure(members, node.set);
+                requireKnownComponents(node.componentAlternatives, members);
+                yield new Structure(members, node.set, node.componentAlternatives);
             }
             default -> throw new IllegalStateException("unreachable kind " + node.kind);
         };
@@ -450,15 +518,33 @@ public final class Asn1ModuleReader {
 
     /** X.680 29.3: a CHOICE's alternatives must carry distinct tags, since the tag is all that selects one. */
     private static void requireDistinctAlternatives(List<Member> alternatives) {
+        requireDistinctTags(alternatives, "alternative", "a CHOICE");
+    }
+
+    private static void requireDistinctTags(List<Member> members, String role, String of) {
         Set<String> seen = new HashSet<>();
-        for (Member alternative : alternatives) {
-            Set<String> tags = leadingTags(alternative);
-            if (tags.contains(ANY_TAG) && alternatives.size() > 1 || tags.stream().anyMatch(seen::contains)) {
-                throw new ValidationException(("The extension's ASN.1 module cannot be decoded: alternative '%s' "
-                        + "of a CHOICE shares its tag with another alternative; tag them apart")
-                        .formatted(alternative.name()));
+        for (Member member : members) {
+            Set<String> tags = leadingTags(member);
+            if (tags.contains(ANY_TAG) && members.size() > 1 || tags.stream().anyMatch(seen::contains)) {
+                throw new ValidationException(("The extension's ASN.1 module cannot be decoded: %s '%s' of %s "
+                        + "shares its tag with another; tag them apart").formatted(role, member.name(), of));
             }
             seen.addAll(tags);
+        }
+    }
+
+    /** A component constraint naming a member the structure does not have would hold or fail for no reason. */
+    private static void requireKnownComponents(List<List<ComponentRule>> alternatives, List<Member> members) {
+        Set<String> names = new HashSet<>();
+        members.forEach(member -> names.add(member.name()));
+        for (List<ComponentRule> alternative : alternatives) {
+            for (ComponentRule rule : alternative) {
+                if (!names.contains(rule.member())) {
+                    throw new ValidationException(
+                            "The extension's ASN.1 module constrains component '%s', which the type does not declare"
+                                    .formatted(rule.member()));
+                }
+            }
         }
     }
 

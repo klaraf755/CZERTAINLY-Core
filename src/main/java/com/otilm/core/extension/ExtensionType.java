@@ -72,11 +72,34 @@ public sealed interface ExtensionType {
         }
     }
 
-    /** A SEQUENCE or SET of declared members, addressed by name. */
-    record Structure(List<Member> members, boolean set) implements ExtensionType {
+    /** What a component constraint says about one member: that it is present, absent, or holds a given value. */
+    enum Presence {
+        PRESENT,
+        ABSENT,
+        EQUALS
+    }
+
+    /** One clause of a {@code WITH COMPONENTS} constraint. {@code value} is set only for {@link Presence#EQUALS}. */
+    record ComponentRule(String member, Presence presence, Object value) {
+    }
+
+    /**
+     * A SEQUENCE or SET of declared members, addressed by name.
+     *
+     * @param componentAlternatives the {@code WITH COMPONENTS} constraint, as alternatives of which a value must
+     * satisfy at least one; each alternative is a conjunction of rules. Empty means unconstrained. This is how a module
+     * says "at least one of these", or "this member only when that one holds", which the members' own OPTIONAL and
+     * DEFAULT cannot.
+     */
+    record Structure(List<Member> members, boolean set,
+            List<List<ComponentRule>> componentAlternatives) implements ExtensionType {
 
         public Structure(List<Member> members) {
-            this(members, false);
+            this(members, false, List.of());
+        }
+
+        public Structure(List<Member> members, boolean set) {
+            this(members, set, List.of());
         }
     }
 

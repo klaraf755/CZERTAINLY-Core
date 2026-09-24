@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
+import com.otilm.core.extension.ExtensionType.ComponentRule;
 import com.otilm.core.extension.ExtensionType.Member;
 import com.otilm.core.extension.ExtensionType.Opaque;
 import com.otilm.core.extension.ExtensionType.Range;
@@ -20,6 +21,8 @@ import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Collectors;
 import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1EncodableVector;
@@ -89,20 +92,26 @@ public final class JerCodec {
     }
 
     /**
-     * Whether a value was written out in JSON rather than handed over as base64 DER. The two are told apart by their
-     * first character: a JSON value begins with a brace, bracket or quote, or is a number or one of the literals
-     * {@code true}, {@code false}, {@code null}. Base64 of DER cannot look like any of those - its first character
-     * encodes the leading tag byte, and a digit or minus would mean a tag byte no extension value carries, while the
-     * literals are too short to be a DER blob and are not base64 of any tag anyway.
+     * The value as JSON when it was written out, or empty when it was handed over as base64 DER. The two are told apart
+     * by parsing, not by peeking at a character: a base64 string is a run of letters, digits, {@code +}, {@code /} and
+     * {@code =}, and no such run of more than a few characters is a complete JSON value - a leading digit is followed
+     * by letters the JSON grammar has no place for. The one overlap, a string of digits only, decodes to bytes whose
+     * second byte would have to be a DER length longer than the blob itself.
      */
-    public static boolean looksWritten(String value) {
-        String trimmed = value == null ? "" : value.strip();
-        if (trimmed.isEmpty()) {
-            return false;
+    public static Optional<JsonNode> tryParse(String value) {
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
         }
-        char first = trimmed.charAt(0);
-        return "{[\"".indexOf(first) >= 0 || first == '-' || Character.isDigit(first) || trimmed.equals("true")
-                || trimmed.equals("false") || trimmed.equals("null");
+        try {
+            return Optional.ofNullable(STRICT_READER.readTree(value));
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Whether a value was written out in JSON rather than handed over as base64 DER. */
+    public static boolean looksWritten(String value) {
+        return tryParse(value).isPresent();
     }
 
     public static byte[] encode(JsonNode value, ExtensionType type) {
@@ -157,7 +166,51 @@ public final class JerCodec {
             }
             members.add(tagged(encodable(written, member.type(), path + "." + member.name()), member));
         }
+        requireComponentAlternatives(value, type, path);
         return type.set() ? new DERSet(members) : new DERSequence(members);
+    }
+
+    /**
+     * A value must satisfy at least one alternative of the type's {@code WITH COMPONENTS} constraint. A member written
+     * as its DEFAULT counts as absent for PRESENT and ABSENT, since that is what it encodes to, but as holding that
+     * value for an EQUALS rule, since that is what it means.
+     */
+    private static void requireComponentAlternatives(JsonNode value, Structure type, String path) {
+        if (type.componentAlternatives().isEmpty()) {
+            return;
+        }
+        for (List<ComponentRule> alternative : type.componentAlternatives()) {
+            if (alternative.stream().allMatch(rule -> holds(rule, value, type))) {
+                return;
+            }
+        }
+        throw refusal(path, "must " + type
+                .componentAlternatives()
+                .stream()
+                .map(alternative -> alternative.stream().map(JerCodec::describe).collect(Collectors.joining(" and ")))
+                .collect(Collectors.joining(", or ")));
+    }
+
+    private static boolean holds(ComponentRule rule, JsonNode value, Structure type) {
+        Member member = type.members().stream().filter(m -> m.name().equals(rule.member())).findFirst().orElse(null);
+        JsonNode written = value.get(rule.member());
+        boolean present = written != null && !written.isNull() && !(member != null && isDefault(written, member));
+        return switch (rule.presence()) {
+            case PRESENT -> present;
+            case ABSENT -> !present;
+            case EQUALS -> written != null && !written.isNull()
+                    ? literalEquals(written, rule.value())
+                    : member != null && member.defaultValue() != null
+                            && Objects.equals(normalise(member.defaultValue()), normalise(rule.value()));
+        };
+    }
+
+    private static String describe(ComponentRule rule) {
+        return switch (rule.presence()) {
+            case PRESENT -> "have " + rule.member();
+            case ABSENT -> "omit " + rule.member();
+            case EQUALS -> "have " + rule.member() + " = " + rule.value();
+        };
     }
 
     private static void requirePresent(Member member, String path) {
@@ -167,17 +220,24 @@ public final class JerCodec {
     }
 
     private static boolean isDefault(JsonNode written, Member member) {
-        if (member.defaultValue() == null) {
-            return false;
-        }
-        Object defaulted = member.defaultValue();
-        if (defaulted instanceof Boolean flag) {
+        return member.defaultValue() != null && literalEquals(written, member.defaultValue());
+    }
+
+    /** Whether a written JSON value is the ASN.1 literal a module wrote: TRUE, FALSE, a number, or a bare word. */
+    private static boolean literalEquals(JsonNode written, Object literal) {
+        if (literal instanceof Boolean flag) {
             return written.isBoolean() && written.booleanValue() == flag;
         }
-        if (defaulted instanceof Number number && written.isIntegralNumber()) {
-            return written.bigIntegerValue().equals(BigInteger.valueOf(number.longValue()));
+        if (literal instanceof Number number && written.isIntegralNumber()) {
+            return written.bigIntegerValue().equals(normalise(number));
         }
-        return Objects.equals(defaulted.toString(), written.asText());
+        return Objects.equals(literal.toString(), written.asText());
+    }
+
+    private static Object normalise(Object literal) {
+        return literal instanceof Number number && !(number instanceof BigInteger)
+                ? BigInteger.valueOf(number.longValue())
+                : literal;
     }
 
     private static void rejectUndeclared(JsonNode value, List<Member> declared, String path) {

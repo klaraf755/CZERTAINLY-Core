@@ -64,6 +64,35 @@ class ShippedExtensionModuleTest {
     }
 
     @Test
+    void privateKeyUsagePeriodRequiresAtLeastOneMember() {
+        // RFC 3280 4.2.1.4. OPTIONAL on both members cannot say this; the module's WITH COMPONENTS does.
+        assertThatThrownBy(() -> der("2.5.29.16", "{}"))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("have notBefore, or have notAfter");
+    }
+
+    @Test
+    void basicConstraintsAllowsAPathLengthOnlyOnACa() throws Exception {
+        // RFC 5280 4.2.1.9: pathLenConstraint MUST NOT appear unless cA is asserted. cA written as its default
+        // is the same as cA absent, and fails the same way.
+        assertThat(der("2.5.29.19", "{\"cA\":false}")).isEqualTo("3000");
+        for (String value : List.of("{\"pathLenConstraint\":0}", "{\"cA\":false,\"pathLenConstraint\":0}")) {
+            assertThatThrownBy(() -> der("2.5.29.19", value))
+                    .as(value)
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("omit pathLenConstraint, or have cA = true");
+        }
+    }
+
+    @Test
+    void nameConstraintsRequiresAtLeastOneSubtreeList() {
+        // RFC 5280 4.2.1.10: conforming CAs MUST NOT issue an empty Name Constraints.
+        assertThatThrownBy(() -> der("2.5.29.30", "{}"))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("have permittedSubtrees, or have excludedSubtrees");
+    }
+
+    @Test
     void privateKeyUsagePeriodTagsItsMembersImplicitly() throws Exception {
         assertThat(der("2.5.29.16", "{\"notBefore\":\"20260101000000Z\"}"))
                 .isEqualTo("3011800F32303236303130313030303030305A");

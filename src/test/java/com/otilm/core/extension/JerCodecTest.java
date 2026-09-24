@@ -198,11 +198,38 @@ class JerCodecTest {
         @Test
         void base64DerIsBytes() {
             // First characters of base64 for the tag bytes an extension value can start with.
-            for (String value : List.of("MAYBAf8CAQA=", "BAMBAgM=", "AgEB", "AQH/", "oA==", "gA8y", "MBIWBA==")) {
+            // "1AEA" is D4 01 00, a private-class tag: base64 that begins with a digit and must still be bytes.
+            for (String value : List
+                    .of("MAYBAf8CAQA=", "BAMBAgM=", "AgEB", "AQH/", "oA==", "gA8y", "MBIWBA==", "1AEA")) {
                 assertThat(JerCodec.looksWritten(value)).as(value).isFalse();
             }
             assertThat(JerCodec.looksWritten("")).isFalse();
             assertThat(JerCodec.looksWritten(null)).isFalse();
+        }
+    }
+
+    @Nested
+    class ComponentConstraints {
+
+        private final Structure atLeastOne = new Structure(
+                List
+                        .of(new Member("a", of(Primitive.INTEGER), 0, false, true, null),
+                                new Member("b", of(Primitive.INTEGER), 1, false, true, null)),
+                false,
+                List
+                        .of(List.of(new ExtensionType.ComponentRule("a", ExtensionType.Presence.PRESENT, null)),
+                                List.of(new ExtensionType.ComponentRule("b", ExtensionType.Presence.PRESENT, null))));
+
+        @Test
+        void oneSatisfiedAlternativeIsEnough() throws Exception {
+            assertThat(der("{\"b\":2}", atLeastOne)).isEqualTo("3003810102");
+        }
+
+        @Test
+        void noSatisfiedAlternativeIsRefusedNamingThem() {
+            assertThatThrownBy(() -> der("{}", atLeastOne))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("must have a, or have b");
         }
     }
 }

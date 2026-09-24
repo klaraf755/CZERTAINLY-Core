@@ -10,6 +10,7 @@ import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
 import java.math.BigInteger;
 import java.util.HexFormat;
+import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -239,6 +240,64 @@ class Asn1ModuleReaderTest {
     }
 
     @Nested
+    class ComponentConstraints {
+
+        @Test
+        void atLeastOneOfTwoOptionals() throws Exception {
+            // The X.680 way to say what OPTIONAL alone cannot: {} is a legal SEQUENCE but not a legal value here.
+            ExtensionType type = read("""
+                    P ::= SEQUENCE { a [0] INTEGER OPTIONAL, b [1] INTEGER OPTIONAL }
+                      (WITH COMPONENTS { ..., a PRESENT } | WITH COMPONENTS { ..., b PRESENT })""");
+
+            assertThat(((Structure) type).componentAlternatives()).hasSize(2);
+            assertThat(encode("{\"a\":1}", type)).isEqualTo("3003800101");
+            assertThatThrownBy(() -> encode("{}", type))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("have a, or have b");
+        }
+
+        @Test
+        void aMemberOnlyWhenAnotherHoldsAValue() throws Exception {
+            ExtensionType type = read("""
+                    P ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLen INTEGER OPTIONAL }
+                      (WITH COMPONENTS { ..., pathLen ABSENT } | WITH COMPONENTS { ..., cA (TRUE) })""");
+
+            assertThat(encode("{}", type)).isEqualTo("3000");
+            assertThat(encode("{\"cA\":true,\"pathLen\":0}", type)).isEqualTo("30060101FF020100");
+            // pathLen without cA asserted, and with cA written as its default, both fail the same way.
+            for (String value : List.of("{\"pathLen\":0}", "{\"cA\":false,\"pathLen\":0}")) {
+                assertThatThrownBy(() -> encode(value, type))
+                        .as(value)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("omit pathLen, or have cA = true");
+            }
+        }
+
+        @Test
+        void aConstraintOnAnUndeclaredComponentIsRefused() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a INTEGER } (WITH COMPONENTS { ..., b PRESENT })"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'b'");
+        }
+
+        @Test
+        void aConstraintOnANonStructureIsRefused() {
+            assertThatThrownBy(() -> read("P ::= INTEGER (WITH COMPONENTS { ..., a PRESENT })"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("WITH COMPONENTS");
+        }
+
+        @Test
+        void setMembersMustCarryDistinctTags() {
+            // DER sorts a SET by tag, so two members with the same tag could never be told apart when read back.
+            assertThatThrownBy(() -> read("S ::= SET { a INTEGER, b INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("a SET");
+            assertThat(read("S ::= SET { a INTEGER, b BOOLEAN }")).isNotNull();
+        }
+    }
+
+    @Nested
     class Constraints {
 
         @Test
@@ -317,6 +376,20 @@ class Asn1ModuleReaderTest {
             assertThatThrownBy(() -> read(module.toString()))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("more than");
+        }
+
+        @Test
+        void aModuleWithoutEnd() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("M DEFINITIONS ::= BEGIN P ::= INTEGER"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("END");
+        }
+
+        @Test
+        void contentAfterEnd() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("M DEFINITIONS ::= BEGIN P ::= INTEGER END Q ::= BOOLEAN"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("after END");
         }
 
         @Test

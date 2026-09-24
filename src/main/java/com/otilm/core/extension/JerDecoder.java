@@ -13,6 +13,7 @@ import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
 import com.otilm.core.serialization.ObjectMapperFactory;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import org.bouncycastle.asn1.ASN1BitString;
@@ -76,6 +77,9 @@ public final class JerDecoder {
 
     private static JsonNode structure(ASN1Encodable encoded, Structure type, String path) {
         List<ASN1Encodable> components = componentsOf(encoded, type.set(), path);
+        if (type.set()) {
+            return setStructure(components, type, path);
+        }
         ObjectNode out = MAPPER.createObjectNode();
         int next = 0;
         for (Member member : type.members()) {
@@ -92,6 +96,36 @@ public final class JerDecoder {
             }
         }
         if (next < components.size()) {
+            throw new ValidationException(
+                    "Extension value at %s carries more members than the extension declares".formatted(path));
+        }
+        return out;
+    }
+
+    /**
+     * DER sorts a SET's components by tag rather than keeping the declared order, so a SET is read by finding each
+     * member's component wherever it landed. The reader has already required every member to carry a distinct tag,
+     * which is what makes that lookup unambiguous.
+     */
+    private static JsonNode setStructure(List<ASN1Encodable> components, Structure type, String path) {
+        ObjectNode out = MAPPER.createObjectNode();
+        List<ASN1Encodable> remaining = new ArrayList<>(components);
+        for (Member member : type.members()) {
+            ASN1Encodable match = remaining
+                    .stream()
+                    .filter(component -> fits(component, member))
+                    .findFirst()
+                    .orElse(null);
+            if (match != null) {
+                remaining.remove(match);
+                out.set(member.name(), value(untag(match, member, path), member.type(), path + "." + member.name()));
+            } else if (member.defaultValue() != null) {
+                out.set(member.name(), MAPPER.valueToTree(member.defaultValue()));
+            } else if (!member.optional()) {
+                throw new ValidationException("Extension value at %s.%s is missing".formatted(path, member.name()));
+            }
+        }
+        if (!remaining.isEmpty()) {
             throw new ValidationException(
                     "Extension value at %s carries more members than the extension declares".formatted(path));
         }

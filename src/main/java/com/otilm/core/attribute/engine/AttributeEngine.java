@@ -1,6 +1,7 @@
 package com.otilm.core.attribute.engine;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.NotFoundException;
@@ -892,7 +893,8 @@ public class AttributeEngine {
             List<ValidationError> errors) {
         for (String extensionOid : extensionOids) {
             String structuredTarget = StructuredExtensionCodec.structuredTargetName(extensionOid);
-            if (structuredTarget != null && JerCodec.looksWritten(value)) {
+            JsonNode written = JerCodec.tryParse(value).orElse(null);
+            if (structuredTarget != null && written != null) {
                 // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain
                 // a second, weaker way in. The typed target takes its values from a closed vocabulary, so it
                 // cannot express a malformed one.
@@ -902,7 +904,7 @@ public class AttributeEngine {
                                         label, extensionOid, structuredTarget));
                 continue;
             }
-            if (!JerCodec.looksWritten(value)) {
+            if (written == null) {
                 // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
                 continue;
             }
@@ -928,7 +930,7 @@ public class AttributeEngine {
                 continue;
             }
             try {
-                JerCodec.encodeFromString(value, type);
+                JerCodec.encode(written, type);
             } catch (ValidationException e) {
                 errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
             }
