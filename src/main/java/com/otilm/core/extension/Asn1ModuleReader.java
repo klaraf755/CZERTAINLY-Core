@@ -68,6 +68,14 @@ public final class Asn1ModuleReader {
         STRUCTURE
     }
 
+    /**
+     * One {@code WITH COMPONENTS} alternative as written. Without {@code ...} it is a full specification, and X.680
+     * 51.8.7 reads every optional member it does not name as ABSENT; with {@code ...} it constrains only what it names.
+     * The difference is resolved into rules once the members are known.
+     */
+    private record Spec(List<ComponentRule> rules, boolean full) {
+    }
+
     /** The parse tree, before type references are resolved. */
     private static final class Node {
 
@@ -79,7 +87,7 @@ public final class Asn1ModuleReader {
         private boolean set;
         private List<Range> valueRanges = List.of();
         private List<Range> sizes = List.of();
-        private List<List<ComponentRule>> componentAlternatives = List.of();
+        private List<Spec> componentSpecs = List.of();
         private String name;
         private Integer tag;
         private Boolean explicit;
@@ -180,21 +188,54 @@ public final class Asn1ModuleReader {
 
     // ---------- parsing ----------
 
+    /**
+     * {@code Name [{ definitive OID }] DEFINITIONS [IMPLICIT|EXPLICIT|AUTOMATIC TAGS] [EXTENSIBILITY IMPLIED] ::= BEGIN}.
+     * Every clause is read, because a clause that is skipped is one whose meaning the encoding silently lacks.
+     */
     private void module() {
         take();
-        while (!peek().equals("BEGIN")) {
-            String token = take();
-            if (token.equals("IMPLICIT")) {
-                implicitTags = true;
-            } else if (token.equals("AUTOMATIC")) {
-                // AUTOMATIC TAGS assigns [0], [1], ... to every member, which this reader does not do; reading the
-                // module as if the clause were absent would encode every member with the wrong tag.
-                throw new ValidationException(
-                        "The extension's ASN.1 module uses AUTOMATIC TAGS, which this platform does not support; "
-                                + "write the tags out and declare IMPLICIT or EXPLICIT TAGS");
+        if (accept("{")) {
+            while (!accept("}")) {
+                take();
             }
         }
+        require("DEFINITIONS");
+        String tagging = null;
+        boolean extensibility = false;
+        while (!peek().equals("::=")) {
+            String token = take();
+            switch (token) {
+                case "IMPLICIT", "EXPLICIT", "AUTOMATIC" -> {
+                    require("TAGS");
+                    tagging = token;
+                }
+                case "EXTENSIBILITY" -> {
+                    require("IMPLIED");
+                    extensibility = true;
+                }
+                default -> throw new ValidationException(
+                        "The extension's ASN.1 module has '%s' in its header, which this platform does not support"
+                                .formatted(token));
+            }
+        }
+        require("::=");
         require("BEGIN");
+        if ("AUTOMATIC".equals(tagging)) {
+            // AUTOMATIC TAGS assigns [0], [1], ... to every member, which this reader does not do; reading the
+            // module as if the clause were absent would encode every member with the wrong tag.
+            throw new ValidationException(
+                    "The extension's ASN.1 module uses AUTOMATIC TAGS, which this platform does not support; "
+                            + "write the tags out and declare IMPLICIT or EXPLICIT TAGS");
+        }
+        if (extensibility) {
+            // Implied extensibility makes every SEQUENCE, SET and CHOICE open to members the module does not
+            // name. Values are held to exactly the members it does, so the clause would mean something the
+            // encoding does not honour.
+            throw new ValidationException(
+                    "The extension's ASN.1 module declares EXTENSIBILITY IMPLIED, which this platform does not "
+                            + "support; its types are closed to the members they name");
+        }
+        implicitTags = "IMPLICIT".equals(tagging);
         while (!peek().equals("END") && at < tokens.size()) {
             String name = take();
             require("::=");
@@ -283,28 +324,18 @@ public final class Asn1ModuleReader {
                     "The extension's ASN.1 module applies WITH COMPONENTS to something other than a SEQUENCE or SET");
         }
         require("(");
-        List<List<ComponentRule>> alternatives = new ArrayList<>();
+        List<Spec> specs = new ArrayList<>();
         do {
             require("WITH");
             require("COMPONENTS");
             require("{");
             List<ComponentRule> rules = new ArrayList<>();
+            boolean full = true;
             do {
                 if (accept("...")) {
-                    continue;
-                }
-                String member = take();
-                if (accept("PRESENT")) {
-                    rules.add(new ComponentRule(member, Presence.PRESENT, null));
-                } else if (accept("ABSENT")) {
-                    rules.add(new ComponentRule(member, Presence.ABSENT, null));
-                } else if (accept("(")) {
-                    rules.add(new ComponentRule(member, Presence.EQUALS, literal(take())));
-                    require(")");
+                    full = false;
                 } else {
-                    throw new ValidationException(("The extension's ASN.1 module constrains component '%s' with "
-                            + "'%s'; only PRESENT, ABSENT or a single value in parentheses are supported")
-                            .formatted(member, peek()));
+                    componentRule(rules);
                 }
             } while (accept(","));
             require("}");
@@ -312,10 +343,46 @@ public final class Asn1ModuleReader {
                 throw new ValidationException(
                         "The extension's ASN.1 module has a WITH COMPONENTS that constrains nothing");
             }
-            alternatives.add(List.copyOf(rules));
+            specs.add(new Spec(List.copyOf(rules), full));
         } while (accept("|"));
         require(")");
-        node.componentAlternatives = List.copyOf(alternatives);
+        node.componentSpecs = List.copyOf(specs);
+    }
+
+    private void componentRule(List<ComponentRule> rules) {
+        String member = take();
+        if (accept("PRESENT")) {
+            rules.add(new ComponentRule(member, Presence.PRESENT, null));
+        } else if (accept("ABSENT")) {
+            rules.add(new ComponentRule(member, Presence.ABSENT, null));
+        } else if (accept("(")) {
+            rules.add(new ComponentRule(member, Presence.EQUALS, literal(take())));
+            require(")");
+        } else {
+            throw new ValidationException(("The extension's ASN.1 module constrains component '%s' with "
+                    + "'%s'; only PRESENT, ABSENT or a single value in parentheses are supported")
+                    .formatted(member, peek()));
+        }
+    }
+
+    /** Full specifications gain an ABSENT rule for every optional member they leave unnamed. */
+    private static List<List<ComponentRule>> expand(List<Spec> specs, List<Member> members) {
+        List<List<ComponentRule>> out = new ArrayList<>();
+        for (Spec spec : specs) {
+            List<ComponentRule> rules = new ArrayList<>(spec.rules());
+            if (spec.full()) {
+                Set<String> named = new HashSet<>();
+                spec.rules().forEach(rule -> named.add(rule.member()));
+                for (Member member : members) {
+                    boolean omittable = member.optional() || member.defaultValue() != null;
+                    if (omittable && !named.contains(member.name())) {
+                        rules.add(new ComponentRule(member.name(), Presence.ABSENT, null));
+                    }
+                }
+            }
+            out.add(List.copyOf(rules));
+        }
+        return List.copyOf(out);
     }
 
     private void named(Node node, String token) {
@@ -472,8 +539,9 @@ public final class Asn1ModuleReader {
                 } else {
                     requireDecodableOptionals(members);
                 }
-                requireKnownComponents(node.componentAlternatives, members);
-                yield new Structure(members, node.set, node.componentAlternatives);
+                List<List<ComponentRule>> alternatives = expand(node.componentSpecs, members);
+                requireKnownComponents(alternatives, members);
+                yield new Structure(members, node.set, alternatives);
             }
         };
     }
@@ -512,7 +580,7 @@ public final class Asn1ModuleReader {
     private static ExtensionType constrain(ExtensionType resolved, Node reference) {
         boolean ranges = !reference.valueRanges.isEmpty();
         boolean sizes = !reference.sizes.isEmpty();
-        boolean components = !reference.componentAlternatives.isEmpty();
+        boolean components = !reference.componentSpecs.isEmpty();
         if (!ranges && !sizes && !components) {
             return resolved;
         }
@@ -534,8 +602,9 @@ public final class Asn1ModuleReader {
                             + "on both its definition and a reference to it; state the constraint once")
                             .formatted(name));
                 }
-                requireKnownComponents(reference.componentAlternatives, members);
-                yield new Structure(members, set, reference.componentAlternatives);
+                List<List<ComponentRule>> alternatives = expand(reference.componentSpecs, members);
+                requireKnownComponents(alternatives, members);
+                yield new Structure(members, set, alternatives);
             }
             case Choice ignored -> throw constraintRefusal(name, "a constraint; constrain its alternatives instead");
             case Opaque ignored -> throw constraintRefusal(name, "a constraint; it is not defined here");

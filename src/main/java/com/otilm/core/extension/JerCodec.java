@@ -21,6 +21,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.stream.Collectors;
 import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
@@ -344,6 +345,21 @@ public final class JerCodec {
      * encode a different value than was written, and a non-integer count would be coerced rather than refused.
      */
     private static ASN1Encodable bitString(JsonNode value, Scalar type, String path) {
+        OptionalInt fixed = Range.single(type.sizes());
+        if (value.isTextual()) {
+            // X.697 24.2: a bit string of fixed size is written as its octets alone, padded to a whole number of
+            // them; the size says how many of the bits count.
+            if (fixed.isEmpty()) {
+                throw refusal(path, "must carry a hexadecimal value and a length in bits; only a bit string of "
+                        + "fixed size is written as a bare string");
+            }
+            byte[] octets = hex(value, path);
+            int expected = (fixed.getAsInt() + 7) / 8;
+            if (octets.length != expected) {
+                throw refusal(path, "must be %d bits, which is %d octets".formatted(fixed.getAsInt(), expected));
+            }
+            return new DERBitString(octets, octets.length * 8 - fixed.getAsInt());
+        }
         if (!value.isObject() || !value.has(VALUE)) {
             throw refusal(path, "must carry a hexadecimal value and a length in bits");
         }
@@ -394,7 +410,9 @@ public final class JerCodec {
             throw refusal(path, "must be a string");
         }
         String written = value.textValue();
-        requireSize(written.length(), type.sizes(), path, "characters");
+        // SIZE on a character string counts characters, and a character outside the basic plane is two UTF-16
+        // units - String.length would refuse a five-character value as six.
+        requireSize(written.codePointCount(0, written.length()), type.sizes(), path, "characters");
         return written;
     }
 

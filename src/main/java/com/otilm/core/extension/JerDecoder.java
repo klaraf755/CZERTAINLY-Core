@@ -8,6 +8,7 @@ import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
 import com.otilm.core.extension.ExtensionType.Member;
 import com.otilm.core.extension.ExtensionType.Opaque;
+import com.otilm.core.extension.ExtensionType.Range;
 import com.otilm.core.extension.ExtensionType.Repeated;
 import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
@@ -16,6 +17,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.OptionalInt;
 import org.bouncycastle.asn1.ASN1BitString;
 import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
@@ -263,17 +265,24 @@ public final class JerDecoder {
             case OCTET_STRING -> MAPPER
                     .getNodeFactory()
                     .textNode(HexFormat.of().formatHex(((ASN1OctetString) primitive).getOctets()).toUpperCase());
-            case BIT_STRING -> bitString((ASN1BitString) primitive);
+            case BIT_STRING -> bitString((ASN1BitString) primitive, type);
             case UTF8_STRING, IA5_STRING, PRINTABLE_STRING ->
                 MAPPER.getNodeFactory().textNode(((ASN1String) primitive).getString());
         };
     }
 
-    private static JsonNode bitString(ASN1BitString bits) {
+    /** A bit string of the fixed size its type declares is written as its octets alone, as X.697 24.2 has it. */
+    private static JsonNode bitString(ASN1BitString bits, Scalar type) {
         byte[] octets = bits.getBytes();
+        int significant = octets.length * 8 - bits.getPadBits();
+        String hex = HexFormat.of().formatHex(octets).toUpperCase();
+        OptionalInt fixed = Range.single(type.sizes());
+        if (fixed.isPresent() && fixed.getAsInt() == significant) {
+            return MAPPER.getNodeFactory().textNode(hex);
+        }
         ObjectNode out = MAPPER.createObjectNode();
-        out.put("value", HexFormat.of().formatHex(octets).toUpperCase());
-        out.put("length", octets.length * 8 - bits.getPadBits());
+        out.put("value", hex);
+        out.put("length", significant);
         return out;
     }
 

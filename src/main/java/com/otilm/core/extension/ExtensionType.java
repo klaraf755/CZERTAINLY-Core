@@ -2,6 +2,7 @@ package com.otilm.core.extension;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.OptionalInt;
 
 /**
  * The ASN.1 type of a certificate extension's value, as much of it as the platform needs to encode a value and check
@@ -52,6 +53,19 @@ public sealed interface ExtensionType {
 
         public boolean admits(BigInteger value) {
             return (min == null || value.compareTo(min) >= 0) && (max == null || value.compareTo(max) <= 0);
+        }
+
+        /**
+         * The single length a SIZE union pins, if it pins exactly one. X.697 writes a fixed-size bit string as a bare
+         * hexadecimal string and a variable-size one as an object, so the encoder and decoder both need this answer.
+         */
+        public static OptionalInt single(List<Range> ranges) {
+            if (ranges.size() != 1) {
+                return OptionalInt.empty();
+            }
+            Range only = ranges.get(0);
+            boolean pinned = only.min() != null && only.min().equals(only.max()) && only.min().bitLength() < 31;
+            return pinned ? OptionalInt.of(only.min().intValue()) : OptionalInt.empty();
         }
 
         /** Whether {@code value} falls in any of {@code ranges}; an empty list constrains nothing. */

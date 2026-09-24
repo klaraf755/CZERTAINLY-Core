@@ -302,4 +302,51 @@ class JerCodecTest {
             assertThat(der("{\"ku\":{\"value\":\"80\",\"length\":1}}", withBits)).isEqualTo("3004" + "03020780");
         }
     }
+
+    @Nested
+    class FixedSizeBitString {
+
+        private final Structure eightBits = new Structure(
+                List.of(new Member("ku", new Scalar(Primitive.BIT_STRING, List.of(), List.of(Range.of(8, 8))))));
+
+        @Test
+        void isWrittenAsItsOctetsAlone() throws Exception {
+            // X.697 24.2: fixed size means the octets carry it; the size says how many bits count.
+            assertThat(der("{\"ku\":\"80\"}", eightBits)).isEqualTo("3004" + "03020080");
+        }
+
+        @Test
+        void theObjectFormIsStillAccepted() throws Exception {
+            assertThat(der("{\"ku\":{\"value\":\"80\",\"length\":8}}", eightBits)).isEqualTo("3004" + "03020080");
+        }
+
+        @Test
+        void theWrongNumberOfOctetsIsRefused() {
+            assertThatThrownBy(() -> der("{\"ku\":\"8000\"}", eightBits))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("8 bits");
+        }
+
+        @Test
+        void aVariableSizeBitStringRefusesTheBareForm() {
+            Structure variable = new Structure(List.of(new Member("ku", of(Primitive.BIT_STRING))));
+            assertThatThrownBy(() -> der("{\"ku\":\"80\"}", variable))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("fixed size");
+        }
+    }
+
+    @Nested
+    class StringSizes {
+
+        @Test
+        void countCharactersNotUtf16Units() throws Exception {
+            // A character outside the basic plane is two UTF-16 units; SIZE (5) must still admit five characters.
+            Scalar five = new Scalar(Primitive.UTF8_STRING, List.of(), List.of(Range.of(5, 5)));
+            assertThat(der("\"abcd\\uD83D\\uDE00\"", five)).startsWith("0C08");
+            assertThatThrownBy(() -> der("\"abcdef\"", five))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("6 characters");
+        }
+    }
 }

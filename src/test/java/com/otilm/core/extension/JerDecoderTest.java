@@ -176,4 +176,20 @@ class JerDecoderTest {
         assertThat(decode("3106" + "0101FF" + "020105", set)).hasToString("{\"a\":5,\"b\":true}");
         roundTrips("31060101FF020105", set);
     }
+
+    @Test
+    void aFixedSizeBitStringReadsBackAsItsOctetsAlone() {
+        Structure eightBits = new Structure(
+                List.of(new Member("ku", new Scalar(Primitive.BIT_STRING, List.of(), List.of(Range.of(8, 8))))));
+
+        assertThat(decode("300403020080", eightBits)).hasToString("{\"ku\":\"80\"}");
+        roundTrips("300403020080", eightBits);
+    }
+
+    @Test
+    void aVariableSizeBitStringReadsBackAsAnObject() {
+        Structure variable = new Structure(List.of(new Member("ku", new Scalar(Primitive.BIT_STRING))));
+
+        assertThat(decode("300403020780", variable)).hasToString("{\"ku\":{\"value\":\"80\",\"length\":1}}");
+    }
 }

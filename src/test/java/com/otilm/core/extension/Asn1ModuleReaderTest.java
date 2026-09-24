@@ -258,6 +258,23 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aFullSpecificationMakesUnnamedOptionalsAbsent() throws Exception {
+            // X.680 51.8.7: without "...", a WITH COMPONENTS constrains every member, so b must be absent.
+            ExtensionType full = read("""
+                    P ::= SEQUENCE { a [0] INTEGER OPTIONAL, b [1] INTEGER OPTIONAL }
+                      (WITH COMPONENTS { a PRESENT })""");
+            ExtensionType partial = read("""
+                    P ::= SEQUENCE { a [0] INTEGER OPTIONAL, b [1] INTEGER OPTIONAL }
+                      (WITH COMPONENTS { ..., a PRESENT })""");
+
+            assertThat(encode("{\"a\":1}", full)).isEqualTo("3003800101");
+            assertThatThrownBy(() -> encode("{\"a\":1,\"b\":2}", full))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("omit b");
+            assertThat(encode("{\"a\":1,\"b\":2}", partial)).isEqualTo("3006800101810102");
+        }
+
+        @Test
         void aMemberOnlyWhenAnotherHoldsAValue() throws Exception {
             ExtensionType type = read("""
                     P ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLen INTEGER OPTIONAL }
@@ -458,6 +475,38 @@ class Asn1ModuleReaderTest {
             assertThatThrownBy(() -> read("P ::= SEQUENCE { a INTEGER, a BOOLEAN }"))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("'a' twice");
+        }
+
+        @Test
+        void extensibilityImpliedIsRefusedByName() {
+            // Every SEQUENCE, SET and CHOICE would be open to members the module does not name; values are held
+            // to exactly the members it does, so the clause would mean something the encoding never honours.
+            assertThatThrownBy(() -> Asn1ModuleReader.read("""
+                    M DEFINITIONS IMPLICIT TAGS EXTENSIBILITY IMPLIED ::= BEGIN
+                    P ::= SEQUENCE { a INTEGER }
+                    END""")).isInstanceOf(ValidationException.class).hasMessageContaining("EXTENSIBILITY IMPLIED");
+        }
+
+        @Test
+        void anUnknownHeaderClauseIsRefusedByName() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("M DEFINITIONS INSTRUCTIONS ::= BEGIN P ::= INTEGER END"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'INSTRUCTIONS'");
+        }
+
+        @Test
+        void aHeaderWithoutDefinitionsIsRefused() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("M ::= BEGIN P ::= INTEGER END"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("DEFINITIONS");
+        }
+
+        @Test
+        void aDefinitiveOidInTheHeaderIsAccepted() {
+            assertThat(Asn1ModuleReader.read("""
+                    M { iso(1) identified-organization(3) 6 } DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                    P ::= INTEGER
+                    END""")).isNotNull();
         }
 
         @Test
