@@ -52,7 +52,8 @@ class Asn1ModuleReaderTest {
             assertThat(structure.members()).hasSize(2);
             assertThat(structure.members().get(0).defaultValue()).isEqualTo(Boolean.FALSE);
             assertThat(structure.members().get(1).optional()).isTrue();
-            assertThat(((Scalar) structure.members().get(1).type()).valueRange().min()).isEqualTo(BigInteger.ZERO);
+            assertThat(((Scalar) structure.members().get(1).type()).valueRanges().get(0).min())
+                    .isEqualTo(BigInteger.ZERO);
             assertThat(encode("{\"cA\":true,\"pathLenConstraint\":0}", type)).isEqualTo("30060101FF020100");
         }
 
@@ -110,6 +111,38 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aModuleWithNoTaggingClauseIsExplicit() throws Exception {
+            // X.680 13.3: an absent TagDefault means EXPLICIT TAGS. Read as implicit, the same member would encode
+            // as 80 0F ... instead of A0 11 18 0F ..., and nothing would say so.
+            ExtensionType type = Asn1ModuleReader.read("""
+                    M DEFINITIONS ::= BEGIN
+                    P ::= SEQUENCE { notBefore [0] GeneralizedTime OPTIONAL }
+                    END""");
+
+            assertThat(((Structure) type).members().get(0).explicit()).isTrue();
+            assertThat(encode("{\"notBefore\":\"20260101000000Z\"}", type))
+                    .isEqualTo("3013A011180F32303236303130313030303030305A");
+        }
+
+        @Test
+        void anExplicitTagsClauseIsExplicit() {
+            ExtensionType type = Asn1ModuleReader.read("""
+                    M DEFINITIONS EXPLICIT TAGS ::= BEGIN
+                    P ::= SEQUENCE { a [0] INTEGER }
+                    END""");
+
+            assertThat(((Structure) type).members().get(0).explicit()).isTrue();
+        }
+
+        @Test
+        void automaticTagsIsRefusedByName() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("""
+                    M DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+                    P ::= SEQUENCE { a INTEGER, b INTEGER }
+                    END""")).isInstanceOf(ValidationException.class).hasMessageContaining("AUTOMATIC TAGS");
+        }
+
+        @Test
         void aTagOnAnOrdinaryTypeStaysImplicit() {
             ExtensionType type = read("Probe ::= SEQUENCE { dNSName [2] IA5String }");
 
@@ -143,7 +176,90 @@ class Asn1ModuleReaderTest {
     }
 
     @Nested
+    class Decodability {
+
+        @Test
+        void anOptionalFollowedBySameTagIsRefused() {
+            // X.680 26.3. Encoded, {"b":5} would read back as {"a":5}: the optional member absorbs the component.
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a INTEGER OPTIONAL, b INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'a'")
+                    .hasMessageContaining("'b'")
+                    .hasMessageContaining("same tag");
+        }
+
+        @Test
+        void aDefaultFollowedBySameTagIsRefused() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a BOOLEAN DEFAULT FALSE, b BOOLEAN }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("same tag");
+        }
+
+        @Test
+        void theRunEndsAtTheFirstMandatoryMember() {
+            // c shares a's tag, but b is mandatory and sits between them, so an encoding is unambiguous.
+            assertThat(read("P ::= SEQUENCE { a INTEGER OPTIONAL, b UTF8String, c INTEGER }")).isNotNull();
+        }
+
+        @Test
+        void differentStringTypesAreDistinct() {
+            assertThat(read("P ::= SEQUENCE { a UTF8String OPTIONAL, b IA5String }")).isNotNull();
+        }
+
+        @Test
+        void tagsMakeAnOptionalRunDecodable() {
+            assertThat(read("P ::= SEQUENCE { a [0] INTEGER OPTIONAL, b [1] INTEGER }")).isNotNull();
+        }
+
+        @Test
+        void anOptionalOpaqueCollidesWithEverything() {
+            // ANY can carry any tag, so nothing after it in the run can be told from it.
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a ANY OPTIONAL, b INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("same tag");
+        }
+
+        @Test
+        void choiceAlternativesMustCarryDistinctTags() {
+            assertThatThrownBy(() -> read("C ::= CHOICE { a IA5String, b IA5String }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("alternative 'b'");
+            assertThat(read("C ::= CHOICE { a IA5String, b UTF8String }")).isNotNull();
+            assertThat(read("C ::= CHOICE { a [0] IA5String, b [1] IA5String }")).isNotNull();
+        }
+
+        @Test
+        void aChoiceInsideAnOptionalRunContributesAllItsTags() {
+            assertThatThrownBy(() -> read("""
+                    P ::= SEQUENCE { a Alt OPTIONAL, b INTEGER }
+                    Alt ::= CHOICE { x IA5String, y INTEGER }"""))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("same tag");
+        }
+    }
+
+    @Nested
     class Constraints {
+
+        @Test
+        void aSizeUnionOnASequenceOfIsKept() throws Exception {
+            ExtensionType type = read("F ::= SEQUENCE SIZE (1 | 3) OF INTEGER");
+
+            assertThat(((Repeated) type).sizes()).hasSize(2);
+            assertThat(encode("[1]", type)).isEqualTo("3003020101");
+            assertThatThrownBy(() -> encode("[1,2]", type))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("2 elements");
+        }
+
+        @Test
+        void aValueUnionOnAnIntegerIsKept() throws Exception {
+            ExtensionType type = read("T ::= INTEGER (1 | 3)");
+
+            assertThat(((Scalar) type).valueRanges()).hasSize(2);
+            assertThat(encode("3", type)).isEqualTo("020103");
+            assertThatThrownBy(() -> encode("2", type)).isInstanceOf(ValidationException.class);
+        }
 
         @Test
         void aSizeUnionIsKeptAsAUnion() throws Exception {
@@ -179,6 +295,28 @@ class Asn1ModuleReaderTest {
         void aConstructOutsideTheSupportedSubset() {
             assertThatThrownBy(() -> read("Probe ::= SEQUENCE { thing INTEGER (SIZE (1..2)) } (WITH COMPONENTS { x })"))
                     .isInstanceOf(ValidationException.class);
+        }
+
+        @Test
+        void aModuleNestedBeyondTheBudget() {
+            String open = "SEQUENCE { m ".repeat(40);
+            String close = " }".repeat(40);
+            assertThatThrownBy(() -> read("P ::= " + open + "INTEGER" + close))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("nests types more than");
+        }
+
+        @Test
+        void aModuleThatResolvesToTooManyMembers() {
+            // Each level names the next twice, so resolving the chain doubles at every step.
+            StringBuilder module = new StringBuilder("T0 ::= SEQUENCE { a T1, b T1 }\n");
+            for (int i = 1; i < 20; i++) {
+                module.append("T%d ::= SEQUENCE { a [0] T%d, b [1] T%d }\n".formatted(i, i + 1, i + 1));
+            }
+            module.append("T20 ::= INTEGER");
+            assertThatThrownBy(() -> read(module.toString()))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("more than");
         }
 
         @Test

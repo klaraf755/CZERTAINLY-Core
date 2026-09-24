@@ -88,6 +88,23 @@ public final class JerCodec {
         return encode(parse(json), type);
     }
 
+    /**
+     * Whether a value was written out in JSON rather than handed over as base64 DER. The two are told apart by their
+     * first character: a JSON value begins with a brace, bracket or quote, or is a number or one of the literals
+     * {@code true}, {@code false}, {@code null}. Base64 of DER cannot look like any of those - its first character
+     * encodes the leading tag byte, and a digit or minus would mean a tag byte no extension value carries, while the
+     * literals are too short to be a DER blob and are not base64 of any tag anyway.
+     */
+    public static boolean looksWritten(String value) {
+        String trimmed = value == null ? "" : value.strip();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        char first = trimmed.charAt(0);
+        return "{[\"".indexOf(first) >= 0 || first == '-' || Character.isDigit(first) || trimmed.equals("true")
+                || trimmed.equals("false") || trimmed.equals("null");
+    }
+
     public static byte[] encode(JsonNode value, ExtensionType type) {
         try {
             return encodable(value, type, "$").toASN1Primitive().getEncoded(ASN1Encoding.DER);
@@ -140,7 +157,6 @@ public final class JerCodec {
             }
             members.add(tagged(encodable(written, member.type(), path + "." + member.name()), member));
         }
-        requireMemberCount(members.size(), type.presentMembers(), path);
         return type.set() ? new DERSet(members) : new DERSequence(members);
     }
 
@@ -173,17 +189,11 @@ public final class JerCodec {
         }
     }
 
-    private static void requireMemberCount(int present, Range required, String path) {
-        if (required != null && !required.admits(BigInteger.valueOf(present))) {
-            throw refusal(path, "carries %d members, which the extension does not permit".formatted(present));
-        }
-    }
-
     private static ASN1Encodable repeated(JsonNode value, Repeated type, String path) {
         if (!value.isArray()) {
             throw refusal(path, "must be an array");
         }
-        requireSize(value.size(), type.size(), path, "elements");
+        requireSize(value.size(), type.sizes(), path, "elements");
         ASN1EncodableVector elements = new ASN1EncodableVector();
         int index = 0;
         for (JsonNode element : value) {
@@ -219,7 +229,7 @@ public final class JerCodec {
     private static ASN1Encodable scalar(JsonNode value, Scalar type, String path) {
         return switch (type.primitive()) {
             case BOOLEAN -> ASN1Boolean.getInstance(bool(value, path));
-            case INTEGER -> new ASN1Integer(integer(value, type.valueRange(), path));
+            case INTEGER -> new ASN1Integer(integer(value, type.valueRanges(), path));
             case OID -> new ASN1ObjectIdentifier(text(value, type, path));
             case UTF8_STRING -> new DERUTF8String(text(value, type, path));
             case IA5_STRING -> new DERIA5String(text(value, type, path), true);
@@ -265,12 +275,12 @@ public final class JerCodec {
         return value.booleanValue();
     }
 
-    private static BigInteger integer(JsonNode value, Range range, String path) {
+    private static BigInteger integer(JsonNode value, List<Range> ranges, String path) {
         if (!value.isIntegralNumber()) {
             throw refusal(path, "must be a whole number");
         }
         BigInteger written = value.bigIntegerValue();
-        if (range != null && !range.admits(written)) {
+        if (!ranges.isEmpty() && ranges.stream().noneMatch(range -> range.admits(written))) {
             throw refusal(path, "is outside the permitted range");
         }
         return written;
@@ -282,9 +292,6 @@ public final class JerCodec {
         }
         String written = value.textValue();
         requireSize(written.length(), type.sizes(), path, "characters");
-        if (type.pattern() != null && !written.matches(type.pattern())) {
-            throw refusal(path, "does not match the permitted form");
-        }
         return written;
     }
 
@@ -299,20 +306,10 @@ public final class JerCodec {
         }
     }
 
-    private static void requireSize(int actual, Object permitted, String path, String unit) {
-        List<Range> ranges = permitted instanceof Range single ? List.of(single) : asRanges(permitted);
-        if (ranges.isEmpty()) {
-            return;
-        }
-        BigInteger size = BigInteger.valueOf(actual);
-        if (ranges.stream().noneMatch(range -> range.admits(size))) {
+    private static void requireSize(int actual, List<Range> permitted, String path, String unit) {
+        if (!Range.anyAdmits(permitted, actual)) {
             throw refusal(path, "carries %d %s, which the extension does not permit".formatted(actual, unit));
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<Range> asRanges(Object permitted) {
-        return permitted == null ? List.of() : (List<Range>) permitted;
     }
 
     private static ValidationException refusal(String path, String reason) {

@@ -20,15 +20,18 @@ import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1GeneralizedTime;
+import org.bouncycastle.asn1.ASN1IA5String;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1Null;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1PrintableString;
 import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.ASN1Set;
 import org.bouncycastle.asn1.ASN1String;
 import org.bouncycastle.asn1.ASN1TaggedObject;
+import org.bouncycastle.asn1.ASN1UTF8String;
 import org.bouncycastle.asn1.BERTags;
 
 /**
@@ -128,7 +131,9 @@ public final class JerDecoder {
             case BIT_STRING -> primitive instanceof ASN1BitString;
             case GENERALIZED_TIME -> primitive instanceof ASN1GeneralizedTime;
             case NULL -> primitive instanceof ASN1Null;
-            case UTF8_STRING, IA5_STRING, PRINTABLE_STRING -> primitive instanceof ASN1String;
+            case UTF8_STRING -> primitive instanceof ASN1UTF8String;
+            case IA5_STRING -> primitive instanceof ASN1IA5String;
+            case PRINTABLE_STRING -> primitive instanceof ASN1PrintableString;
         };
     }
 
@@ -139,22 +144,36 @@ public final class JerDecoder {
         }
         ASN1TaggedObject tagged = (ASN1TaggedObject) component.toASN1Primitive();
         try {
-            return member.explicit()
-                    ? tagged.getExplicitBaseObject()
-                    : tagged.getBaseUniversal(false, universalTag(member.type()));
-        } catch (RuntimeException e) {
+            if (member.explicit()) {
+                return tagged.getExplicitBaseObject();
+            }
+            return tagged
+                    .getBaseUniversal(false,
+                            member.type() instanceof Opaque ? opaqueUniversalTag(tagged) : universalTag(member.type()));
+        } catch (RuntimeException | IOException e) {
             throw new ValidationException(
                     "Extension value at %s.%s is not the shape its tag declares".formatted(path, member.name()));
         }
+    }
+
+    /**
+     * An implicit tag replaced the member's own tag, and for an undescribed member no type says what that was. The
+     * encoding still records whether it was constructed, which is enough to tell the two shapes an open type takes in
+     * practice apart: a SEQUENCE (ORAddress, EDIPartyName) or an OCTET STRING. This is the decoder's one inference, and
+     * it exists so that display of an extension the platform itself encoded does not fail on such a member.
+     */
+    private static int opaqueUniversalTag(ASN1TaggedObject tagged) throws IOException {
+        boolean constructed = (tagged.getEncoded(ASN1Encoding.DER)[0] & BERTags.CONSTRUCTED) != 0;
+        return constructed ? BERTags.SEQUENCE : BERTags.OCTET_STRING;
     }
 
     private static int universalTag(ExtensionType type) {
         return switch (type) {
             case Structure structure -> structure.set() ? BERTags.SET : BERTags.SEQUENCE;
             case Repeated repeated -> repeated.set() ? BERTags.SET : BERTags.SEQUENCE;
-            // A CHOICE cannot be implicitly tagged, and an undescribed member has no universal tag to ask for.
+            // A CHOICE cannot be implicitly tagged, and an undescribed member is handled before asking.
             case Choice ignored -> throw new IllegalStateException("a choice is never implicitly tagged");
-            case Opaque ignored -> BERTags.OCTET_STRING;
+            case Opaque ignored -> throw new IllegalStateException("resolved from the encoding, not the type");
             case Scalar scalar -> switch (scalar.primitive()) {
                 case BOOLEAN -> BERTags.BOOLEAN;
                 case INTEGER -> BERTags.INTEGER;

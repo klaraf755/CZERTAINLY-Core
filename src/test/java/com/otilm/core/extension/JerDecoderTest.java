@@ -30,7 +30,7 @@ class JerDecoderTest {
     private static final Structure BASIC_CONSTRAINTS = new Structure(List
             .of(new Member("cA", of(Primitive.BOOLEAN), null, false, false, Boolean.FALSE),
                     new Member("pathLenConstraint",
-                            new Scalar(Primitive.INTEGER, new Range(BigInteger.ZERO, null), List.of(), null), null,
+                            new Scalar(Primitive.INTEGER, List.of(new Range(BigInteger.ZERO, null)), List.of()), null,
                             false, true, null)));
 
     private static final Structure SERVICE_ENTITLEMENT = new Structure(List
@@ -135,5 +135,38 @@ class JerDecoderTest {
         assertThatThrownBy(() -> decode("FFFF", BASIC_CONSTRAINTS))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("not valid DER");
+    }
+
+    @Test
+    void anImplicitlyTaggedOpaqueSequenceIsReadBack() {
+        // ORAddress in Name Constraints: the implicit tag replaced the SEQUENCE tag, and the type says only "opaque".
+        // The encoding still records that it is constructed, which is what restores the SEQUENCE.
+        Structure withOpaque = new Structure(
+                List.of(new Member("x400Address", new Opaque("ORAddress"), 3, false, false, null)));
+        String der = "3005" + "A303" + "020105"; // [3] IMPLICIT SEQUENCE { INTEGER 5 }
+
+        assertThat(decode(der, withOpaque).toString()).isEqualTo("{\"x400Address\":\"3003020105\"}");
+        roundTrips(der, withOpaque);
+    }
+
+    @Test
+    void anImplicitlyTaggedOpaquePrimitiveIsReadBackAsOctets() {
+        Structure withOpaque = new Structure(
+                List.of(new Member("blob", new Opaque("Anything"), 1, false, false, null)));
+        String der = "3004" + "8102" + "ABCD"; // [1] IMPLICIT OCTET STRING AB CD
+
+        assertThat(decode(der, withOpaque).toString()).isEqualTo("{\"blob\":\"0402ABCD\"}");
+        roundTrips(der, withOpaque);
+    }
+
+    @Test
+    void stringTypesAreToldApart() {
+        // The reader lets UTF8String and IA5String sit in one optional run because their tags differ; the decoder
+        // has to agree, or it would hand an IA5String to the UTF8String member.
+        Structure two = new Structure(List
+                .of(new Member("u", new Scalar(Primitive.UTF8_STRING), null, false, true, null),
+                        new Member("i", new Scalar(Primitive.IA5_STRING))));
+
+        assertThat(decode("3003" + "160161", two).toString()).isEqualTo("{\"i\":\"a\"}");
     }
 }

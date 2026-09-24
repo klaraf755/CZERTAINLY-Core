@@ -155,6 +155,34 @@ class AttributeEngineJsonExtensionValueTest {
     }
 
     @Test
+    void anUnreadableStoredModuleIsReportedNotThrown() {
+        // A row written straight into the database bypasses registration; every request touching the OID must
+        // still get an answer rather than an escaping exception.
+        register("1.3.6.1.4.1.99999.4.4", ExtensionValueEncoding.DER, "this is not a module");
+        var definition = extensionDefinition("1.3.6.1.4.1.99999.4.4");
+
+        assertThat(AttributeEngine.validateJsonExtensionValues(definition, value(definition, "{\"a\":1}")))
+                .singleElement()
+                .satisfies(error -> assertThat(error.getErrorDescription())
+                        .contains("cannot be checked")
+                        .contains("1.3.6.1.4.1.99999.4.4"));
+    }
+
+    @Test
+    void aBareScalarValueIsWrittenNotBytes() {
+        register("1.3.6.1.4.1.99999.5.5", ExtensionValueEncoding.DER, """
+                M DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Tier ::= INTEGER (0..3)
+                END""");
+        var definition = extensionDefinition("1.3.6.1.4.1.99999.5.5");
+
+        assertThat(AttributeEngine.validateJsonExtensionValues(definition, value(definition, "2"))).isEmpty();
+        assertThat(AttributeEngine.validateJsonExtensionValues(definition, value(definition, "7")))
+                .singleElement()
+                .satisfies(error -> assertThat(error.getErrorDescription()).contains("permitted range"));
+    }
+
+    @Test
     void refusesAWrittenValueForAnExtensionThatHasATypedTarget() {
         // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain a
         // second, weaker way in. The typed target draws on a closed vocabulary and cannot express a malformed

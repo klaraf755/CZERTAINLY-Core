@@ -889,7 +889,7 @@ public class AttributeEngine {
             List<ValidationError> errors) {
         for (String extensionOid : extensionOids) {
             String structuredTarget = StructuredExtensionCodec.structuredTargetName(extensionOid);
-            if (structuredTarget != null && looksWritten(value)) {
+            if (structuredTarget != null && JerCodec.looksWritten(value)) {
                 // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain
                 // a second, weaker way in. The typed target takes its values from a closed vocabulary, so it
                 // cannot express a malformed one.
@@ -899,11 +899,24 @@ public class AttributeEngine {
                                         label, extensionOid, structuredTarget));
                 continue;
             }
-            if (!looksWritten(value)) {
+            if (!JerCodec.looksWritten(value)) {
                 // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
                 continue;
             }
-            ExtensionType type = ExtensionTypes.resolve(extensionOid).orElse(null);
+            ExtensionType type;
+            try {
+                type = ExtensionTypes.resolve(extensionOid).orElse(null);
+            } catch (ValidationException e) {
+                // A module written straight into the database, or saved before the reader tightened, must not
+                // turn every request for this extension into a 500. The cause is logged for whoever has to tell
+                // malformed stored data from a defect; the operator's message cannot say which.
+                logger.warn("Registered ASN.1 module for extension {} could not be read", extensionOid, e);
+                errors
+                        .add(ValidationError
+                                .create("Extension value of attribute {} cannot be checked: the registered ASN.1 module for extension {} is not readable",
+                                        label, extensionOid));
+                continue;
+            }
             if (type == null) {
                 errors
                         .add(ValidationError
@@ -917,16 +930,6 @@ public class AttributeEngine {
                 errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
             }
         }
-    }
-
-    /**
-     * Whether a value was written rather than supplied as bytes. Base64 cannot begin with any of these, so a definition
-     * stored before the structured targets existed keeps projecting its DER blob untouched, while a value someone typed
-     * for the same OID is still refused.
-     */
-    private static boolean looksWritten(String value) {
-        String trimmed = value.strip();
-        return !trimmed.isEmpty() && "{[\"".indexOf(trimmed.charAt(0)) >= 0;
     }
 
     /** The DER-encoded extension OIDs a definition maps, resolved against the registry cache. */

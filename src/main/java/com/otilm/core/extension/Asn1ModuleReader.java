@@ -13,9 +13,11 @@ import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Reads the ASN.1 module an operator registers for an extension into the type the platform encodes against.
@@ -24,6 +26,12 @@ import java.util.Map;
  * The subset is the one certificate extensions are written in: SEQUENCE, SET, their OF forms, CHOICE, context tags, the
  * built-in types X.509 uses, and SIZE and value-range constraints. Anything else is refused by name, so an operator
  * learns their module needs narrowing rather than discovering later that a construct was quietly dropped.
+ *
+ * <p>
+ * Two rules from X.680 are enforced because the decoder depends on them. A module with no tagging clause is EXPLICIT
+ * TAGS (13.3). And where a member is OPTIONAL or DEFAULT, its tag must differ from every member that could follow it in
+ * the same run, and a CHOICE's alternatives must all carry distinct tags (26.3, 29.3) - without that, an encoding
+ * cannot be read back to the members it came from, so such a module is refused rather than registered undecodable.
  */
 public final class Asn1ModuleReader {
 
@@ -34,9 +42,16 @@ public final class Asn1ModuleReader {
                     Map.entry("PrintableString", Primitive.PRINTABLE_STRING),
                     Map.entry("GeneralizedTime", Primitive.GENERALIZED_TIME));
 
+    /** Deep enough for any extension anyone has written; a module that needs more is not one to register. */
+    private static final int MAX_NESTING = 32;
+    /** Inlining references can multiply a small module into a very large type; this caps what one may become. */
+    private static final int MAX_RESOLVED_MEMBERS = 10_000;
+
     private final List<String> tokens = new ArrayList<>();
     private int at;
-    private boolean implicitTags = true;
+    private int nesting;
+    private int resolvedMembers;
+    private boolean implicitTags;
     private final Map<String, Node> assignments = new LinkedHashMap<>();
     private String rootName;
 
@@ -49,7 +64,7 @@ public final class Asn1ModuleReader {
         private List<Node> members;
         private Node element;
         private boolean set;
-        private Range valueRange;
+        private List<Range> valueRanges = List.of();
         private List<Range> sizes = List.of();
         private String name;
         private Integer tag;
@@ -142,10 +157,16 @@ public final class Asn1ModuleReader {
     private void module() {
         take();
         while (!peek().equals("BEGIN")) {
-            if (peek().equals("EXPLICIT")) {
-                implicitTags = false;
+            String token = take();
+            if (token.equals("IMPLICIT")) {
+                implicitTags = true;
+            } else if (token.equals("AUTOMATIC")) {
+                // AUTOMATIC TAGS assigns [0], [1], ... to every member, which this reader does not do; reading the
+                // module as if the clause were absent would encode every member with the wrong tag.
+                throw new ValidationException(
+                        "The extension's ASN.1 module uses AUTOMATIC TAGS, which this platform does not support; "
+                                + "write the tags out and declare IMPLICIT or EXPLICIT TAGS");
             }
-            take();
         }
         require("BEGIN");
         while (!peek().equals("END") && at < tokens.size()) {
@@ -159,6 +180,18 @@ public final class Asn1ModuleReader {
     }
 
     private Node type() {
+        if (++nesting > MAX_NESTING) {
+            throw new ValidationException(
+                    "The extension's ASN.1 module nests types more than %d deep".formatted(MAX_NESTING));
+        }
+        try {
+            return typeBody();
+        } finally {
+            nesting--;
+        }
+    }
+
+    private Node typeBody() {
         Node node = new Node();
         String token = take();
         switch (token) {
@@ -306,8 +339,8 @@ public final class Asn1ModuleReader {
         }
         if (size) {
             node.sizes = List.copyOf(ranges);
-        } else if (ranges.size() == 1) {
-            node.valueRange = ranges.get(0);
+        } else {
+            node.valueRanges = List.copyOf(ranges);
         }
     }
 
@@ -330,11 +363,21 @@ public final class Asn1ModuleReader {
             return resolveReference(node, memberContext, inProgress);
         }
         return switch (node.kind) {
-            case "scalar" -> new Scalar(node.primitive, node.valueRange, node.sizes, null);
+            case "scalar" -> new Scalar(node.primitive, node.valueRanges, node.sizes);
             case "opaque" -> new Opaque(node.reference);
-            case "repeated" -> new Repeated(resolve(node.element, null, inProgress), node.set, singleSize(node));
-            case "choice" -> new Choice(memberList(node, inProgress));
-            case "structure" -> new Structure(memberList(node, inProgress), node.set, singleSize(node));
+            case "repeated" -> new Repeated(resolve(node.element, null, inProgress), node.set, node.sizes);
+            case "choice" -> {
+                List<Member> alternatives = memberList(node, inProgress);
+                requireDistinctAlternatives(alternatives);
+                yield new Choice(alternatives);
+            }
+            case "structure" -> {
+                List<Member> members = memberList(node, inProgress);
+                if (!node.set) {
+                    requireDecodableOptionals(members);
+                }
+                yield new Structure(members, node.set);
+            }
             default -> throw new IllegalStateException("unreachable kind " + node.kind);
         };
     }
@@ -367,6 +410,10 @@ public final class Asn1ModuleReader {
     private List<Member> memberList(Node node, Deque<String> inProgress) {
         List<Member> out = new ArrayList<>();
         for (Node member : node.members) {
+            if (++resolvedMembers > MAX_RESOLVED_MEMBERS) {
+                throw new ValidationException("The extension's ASN.1 module resolves to more than %d members"
+                        .formatted(MAX_RESOLVED_MEMBERS));
+            }
             ExtensionType type = resolve(member, member, inProgress);
             // A tag on an untagged CHOICE is EXPLICIT whatever the module's default says.
             boolean explicit = member.explicit != null ? member.explicit : type instanceof Choice || !implicitTags;
@@ -375,7 +422,83 @@ public final class Asn1ModuleReader {
         return out;
     }
 
-    private static Range singleSize(Node node) {
-        return node.sizes.size() == 1 ? node.sizes.get(0) : null;
+    /**
+     * X.680 26.3: an OPTIONAL or DEFAULT member's tag must differ from the tags of every member that could follow it -
+     * each later member up to and including the first mandatory one. Otherwise an encoding with the optional member
+     * absent is indistinguishable from one with it present, and nothing could read it back.
+     */
+    private static void requireDecodableOptionals(List<Member> members) {
+        for (int i = 0; i < members.size(); i++) {
+            Member member = members.get(i);
+            if (!member.optional() && member.defaultValue() == null) {
+                continue;
+            }
+            Set<String> mine = leadingTags(member);
+            for (int j = i + 1; j < members.size(); j++) {
+                Member later = members.get(j);
+                if (collide(mine, leadingTags(later))) {
+                    throw new ValidationException(("The extension's ASN.1 module cannot be decoded: '%s' is "
+                            + "optional and '%s' can follow it with the same tag, so an encoding could not tell "
+                            + "them apart; tag one of them").formatted(member.name(), later.name()));
+                }
+                if (!later.optional() && later.defaultValue() == null) {
+                    break;
+                }
+            }
+        }
+    }
+
+    /** X.680 29.3: a CHOICE's alternatives must carry distinct tags, since the tag is all that selects one. */
+    private static void requireDistinctAlternatives(List<Member> alternatives) {
+        Set<String> seen = new HashSet<>();
+        for (Member alternative : alternatives) {
+            Set<String> tags = leadingTags(alternative);
+            if (tags.contains(ANY_TAG) && alternatives.size() > 1 || tags.stream().anyMatch(seen::contains)) {
+                throw new ValidationException(("The extension's ASN.1 module cannot be decoded: alternative '%s' "
+                        + "of a CHOICE shares its tag with another alternative; tag them apart")
+                        .formatted(alternative.name()));
+            }
+            seen.addAll(tags);
+        }
+    }
+
+    /** A tag that matches anything: an undescribed member's, which could carry any type at all. */
+    private static final String ANY_TAG = "*";
+
+    /** The tags an encoding of {@code member} can begin with, as strings so classes cannot be confused. */
+    private static Set<String> leadingTags(Member member) {
+        if (member.tag() != null) {
+            return Set.of("context:" + member.tag());
+        }
+        return leadingTags(member.type());
+    }
+
+    private static Set<String> leadingTags(ExtensionType type) {
+        return switch (type) {
+            case Opaque ignored -> Set.of(ANY_TAG);
+            case Structure structure -> Set.of(structure.set() ? "universal:17" : "universal:16");
+            case Repeated repeated -> Set.of(repeated.set() ? "universal:17" : "universal:16");
+            case Choice choice -> {
+                Set<String> all = new HashSet<>();
+                choice.alternatives().forEach(alternative -> all.addAll(leadingTags(alternative)));
+                yield all;
+            }
+            case Scalar scalar -> Set.of("universal:" + switch (scalar.primitive()) {
+                case BOOLEAN -> 1;
+                case INTEGER -> 2;
+                case BIT_STRING -> 3;
+                case OCTET_STRING -> 4;
+                case NULL -> 5;
+                case OID -> 6;
+                case UTF8_STRING -> 12;
+                case PRINTABLE_STRING -> 19;
+                case IA5_STRING -> 22;
+                case GENERALIZED_TIME -> 24;
+            });
+        };
+    }
+
+    private static boolean collide(Set<String> a, Set<String> b) {
+        return a.contains(ANY_TAG) || b.contains(ANY_TAG) || a.stream().anyMatch(b::contains);
     }
 }

@@ -53,32 +53,38 @@ public sealed interface ExtensionType {
         public boolean admits(BigInteger value) {
             return (min == null || value.compareTo(min) >= 0) && (max == null || value.compareTo(max) <= 0);
         }
+
+        /** Whether {@code value} falls in any of {@code ranges}; an empty list constrains nothing. */
+        public static boolean anyAdmits(List<Range> ranges, long value) {
+            BigInteger candidate = BigInteger.valueOf(value);
+            return ranges.isEmpty() || ranges.stream().anyMatch(range -> range.admits(candidate));
+        }
     }
 
     /**
-     * A built-in type, optionally constrained. {@code sizes} holds the permitted lengths - a union, because
-     * {@code SIZE (8 | 32)} is how RFC 5280 states an iPAddress and a single range cannot say it.
+     * A built-in type, optionally constrained. Both constraints are unions, because {@code SIZE (8 | 32)} is how RFC
+     * 5280 states an iPAddress and {@code INTEGER (1 | 3)} is legal, and a single range cannot say either.
      */
-    record Scalar(Primitive primitive, Range valueRange, List<Range> sizes, String pattern) implements ExtensionType {
+    record Scalar(Primitive primitive, List<Range> valueRanges, List<Range> sizes) implements ExtensionType {
 
         public Scalar(Primitive primitive) {
-            this(primitive, null, List.of(), null);
+            this(primitive, List.of(), List.of());
         }
     }
 
     /** A SEQUENCE or SET of declared members, addressed by name. */
-    record Structure(List<Member> members, boolean set, Range presentMembers) implements ExtensionType {
+    record Structure(List<Member> members, boolean set) implements ExtensionType {
 
         public Structure(List<Member> members) {
-            this(members, false, null);
+            this(members, false);
         }
     }
 
-    /** A SEQUENCE OF or SET OF: every element takes the same type. */
-    record Repeated(ExtensionType element, boolean set, Range size) implements ExtensionType {
+    /** A SEQUENCE OF or SET OF: every element takes the same type, and the count is bounded by a SIZE union. */
+    record Repeated(ExtensionType element, boolean set, List<Range> sizes) implements ExtensionType {
 
         public Repeated(ExtensionType element) {
-            this(element, false, null);
+            this(element, false, List.of());
         }
     }
 

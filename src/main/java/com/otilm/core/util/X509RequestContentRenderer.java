@@ -36,12 +36,16 @@ import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.OtherName;
 import org.bouncycastle.util.encoders.Base64;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Pure-kernel renderer: maps {@link X509RequestContent} into BouncyCastle structures. No Spring context required; all
  * methods are static.
  */
 public final class X509RequestContentRenderer {
+
+    private static final Logger logger = LoggerFactory.getLogger(X509RequestContentRenderer.class);
 
     /**
      * Extensions the platform keeps critical regardless of criticalOverridable or registry defaults. BasicConstraints
@@ -205,10 +209,18 @@ public final class X509RequestContentRenderer {
      * whether writing one is possible at all, which needs the extension's ASN.1 type.
      */
     private static byte[] derValue(String oid, String value) throws IOException {
-        if (!looksWritten(value)) {
+        if (!JerCodec.looksWritten(value)) {
             return decodeBase64Der(value);
         }
-        ExtensionType type = ExtensionTypes.resolve(oid).orElse(null);
+        ExtensionType type;
+        try {
+            type = ExtensionTypes.resolve(oid).orElse(null);
+        } catch (ValidationException e) {
+            // A stored module the reader cannot read is bad data, not a bad request. It is logged for whoever has
+            // to fix the row; the requester gets a controlled message rather than an escaping runtime exception.
+            logger.warn("Registered ASN.1 module for extension {} could not be read", oid, e);
+            throw new IOException("Extension " + oid + " has a registered ASN.1 module that cannot be read", e);
+        }
         if (type == null) {
             throw new IOException(
                     "Extension " + oid + " has no registered ASN.1 module, so its value must be base64-encoded DER");
@@ -224,12 +236,6 @@ public final class X509RequestContentRenderer {
             // CertificateException, so only the cause carries the detail.
             throw new IOException("Extension value could not be encoded", e);
         }
-    }
-
-    /** Whether a value was written out rather than handed over as bytes; base64 cannot begin with any of these. */
-    private static boolean looksWritten(String value) {
-        String trimmed = value.strip();
-        return !trimmed.isEmpty() && "{[\"".indexOf(trimmed.charAt(0)) >= 0;
     }
 
     /**

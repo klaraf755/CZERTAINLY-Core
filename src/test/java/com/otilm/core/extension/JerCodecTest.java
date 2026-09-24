@@ -39,18 +39,18 @@ class JerCodecTest {
     // BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER (0..MAX) OPTIONAL }
     private static final Structure BASIC_CONSTRAINTS = new Structure(List
             .of(new Member("cA", of(Primitive.BOOLEAN), null, false, false, Boolean.FALSE),
-                    new Member("pathLenConstraint",
-                            new Scalar(Primitive.INTEGER, new Range(java.math.BigInteger.ZERO, null), List.of(), null),
+                    new Member(
+                            "pathLenConstraint", new Scalar(Primitive.INTEGER,
+                                    List.of(new Range(java.math.BigInteger.ZERO, null)), List.of()),
                             null, false, true, null)));
 
     // ServiceEntitlement, the worked example
     private static final Structure SERVICE_ENTITLEMENT = new Structure(List
-            .of(new Member("serviceId",
-                    new Scalar(Primitive.UTF8_STRING, null, List.of(Range.of(5, 32)), "^svc-[a-z0-9-]+$")),
-                    new Member("tier", new Scalar(Primitive.INTEGER, Range.of(1, 3), List.of(), null)),
+            .of(new Member("serviceId", new Scalar(Primitive.UTF8_STRING, List.of(), List.of(Range.of(5, 32)))),
+                    new Member("tier", new Scalar(Primitive.INTEGER, List.of(Range.of(1, 3)), List.of())),
                     new Member("scopes", new Repeated(new Choice(
                             List.of(new Member("name", of(Primitive.IA5_STRING)), new Member("id", of(Primitive.OID)))),
-                            false, Range.of(1, 8))),
+                            false, List.of(Range.of(1, 8)))),
                     new Member("expires", of(Primitive.GENERALIZED_TIME), 0, false, true, null)));
 
     @Nested
@@ -134,9 +134,12 @@ class JerCodecTest {
         }
 
         @Test
-        void aStringOutsideTheModulesPattern() {
-            assertThatThrownBy(() -> der("{\"serviceId\":\"billing\",\"tier\":1,\"scopes\":[{\"name\":\"a\"}]}",
-                    SERVICE_ENTITLEMENT)).isInstanceOf(ValidationException.class).hasMessageContaining("$.serviceId");
+        void aStringOutsideTheModulesSize() {
+            assertThatThrownBy(
+                    () -> der("{\"serviceId\":\"svc\",\"tier\":1,\"scopes\":[{\"name\":\"a\"}]}", SERVICE_ENTITLEMENT))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.serviceId")
+                    .hasMessageContaining("3 characters");
         }
 
         @Test
@@ -178,6 +181,28 @@ class JerCodecTest {
             assertThatThrownBy(() -> der("{\"value\":\"FFFF\"}", withAny))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("AttributeValue");
+        }
+    }
+
+    @Nested
+    class WrittenOrBytes {
+
+        @Test
+        void everyJerRootFormIsWritten() {
+            for (String value : List
+                    .of("{\"a\":1}", "[1]", "\"010203\"", "5", "-1", "true", "false", "null", "  {\"a\":1}", "\n[1]")) {
+                assertThat(JerCodec.looksWritten(value)).as(value).isTrue();
+            }
+        }
+
+        @Test
+        void base64DerIsBytes() {
+            // First characters of base64 for the tag bytes an extension value can start with.
+            for (String value : List.of("MAYBAf8CAQA=", "BAMBAgM=", "AgEB", "AQH/", "oA==", "gA8y", "MBIWBA==")) {
+                assertThat(JerCodec.looksWritten(value)).as(value).isFalse();
+            }
+            assertThat(JerCodec.looksWritten("")).isFalse();
+            assertThat(JerCodec.looksWritten(null)).isFalse();
         }
     }
 }
