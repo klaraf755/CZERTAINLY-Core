@@ -2,12 +2,14 @@ package com.otilm.core.extension;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.ValidationException;
+import com.otilm.api.model.core.oid.OidCategory;
+import com.otilm.api.model.core.oid.SystemOid;
+import com.otilm.core.util.StructuredExtensionCodec;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,9 +22,6 @@ class ShippedExtensionModuleTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final List<String> SHIPPED = List
-            .of("2.5.29.9", "2.5.29.14", "2.5.29.16", "2.5.29.19", "2.5.29.30", "1.3.6.1.5.5.7.1.24");
-
     private static ExtensionType type(String oid) {
         return Asn1ModuleReader.read(ExtensionTypes.shippedModule(oid).orElseThrow());
     }
@@ -31,11 +30,22 @@ class ShippedExtensionModuleTest {
         return HexFormat.of().formatHex(JerCodec.encode(MAPPER.readTree(json), type(oid))).toUpperCase();
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"2.5.29.9", "2.5.29.14", "2.5.29.16", "2.5.29.19", "2.5.29.30", "1.3.6.1.5.5.7.1.24"})
-    void everyShippedModuleParses(String oid) {
-        assertThat(ExtensionTypes.shippedModule(oid)).isPresent();
-        assertThat(type(oid)).isNotNull();
+    @Test
+    void everySystemCertificateExtensionShipsAModuleThatReads() {
+        // Derived from SystemOid rather than listed, so a system extension added without a module fails the
+        // build here instead of shipping with base64-only values. The typed targets are the only exclusion.
+        List<SystemOid> extensions = Arrays
+                .stream(SystemOid.values())
+                .filter(oid -> oid.getCategory() == OidCategory.CERTIFICATE_EXTENSION)
+                .filter(oid -> StructuredExtensionCodec.structuredTargetName(oid.getOid()) == null)
+                .toList();
+
+        assertThat(extensions).isNotEmpty();
+        assertThat(extensions)
+                .allSatisfy(oid -> assertThat(ExtensionTypes.shippedModule(oid.getOid()))
+                        .as("module for %s (%s)", oid.getOid(), oid.name())
+                        .isPresent());
+        assertThat(extensions).allSatisfy(oid -> assertThat(type(oid.getOid())).isNotNull());
     }
 
     @Test

@@ -178,6 +178,10 @@ public final class Asn1ModuleReader {
         while (!peek().equals("END") && at < tokens.size()) {
             String name = take();
             require("::=");
+            if (assignments.containsKey(name)) {
+                // A second assignment would silently replace the first, constraints and all.
+                throw new ValidationException("The extension's ASN.1 module defines '%s' twice".formatted(name));
+            }
             assignments.put(name, type());
             if (rootName == null) {
                 rootName = name;
@@ -325,9 +329,15 @@ public final class Asn1ModuleReader {
 
     private List<Node> members() {
         List<Node> out = new ArrayList<>();
+        Set<String> names = new HashSet<>();
         require("{");
         do {
             String name = take();
+            if (!names.add(name)) {
+                // A JSON object cannot carry the same key twice, so a value could never name both.
+                throw new ValidationException(
+                        "The extension's ASN.1 module names member '%s' twice in one type".formatted(name));
+            }
             Integer tag = null;
             Boolean explicit = null;
             if (accept("[")) {

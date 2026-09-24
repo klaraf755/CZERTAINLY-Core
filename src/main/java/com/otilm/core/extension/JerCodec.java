@@ -155,7 +155,9 @@ public final class JerCodec {
         ASN1EncodableVector members = new ASN1EncodableVector();
         for (Member member : type.members()) {
             JsonNode written = value.get(member.name());
-            if (written == null || written.isNull() && member.optional()) {
+            if (written == null) {
+                // Absent means absent. A written null is not: it is the JER value of ASN.1 NULL, and for any
+                // other type it is a wrong value the type's own check names.
                 requirePresent(member, path);
                 continue;
             }
@@ -194,11 +196,11 @@ public final class JerCodec {
     private static boolean holds(ComponentRule rule, JsonNode value, Structure type) {
         Member member = type.members().stream().filter(m -> m.name().equals(rule.member())).findFirst().orElse(null);
         JsonNode written = value.get(rule.member());
-        boolean present = written != null && !written.isNull() && !(member != null && isDefault(written, member));
+        boolean present = written != null && !(member != null && isDefault(written, member));
         return switch (rule.presence()) {
             case PRESENT -> present;
             case ABSENT -> !present;
-            case EQUALS -> written != null && !written.isNull()
+            case EQUALS -> written != null
                     ? literalEquals(written, rule.value())
                     : member != null && member.defaultValue() != null
                             && Objects.equals(normalise(member.defaultValue()), normalise(rule.value()));

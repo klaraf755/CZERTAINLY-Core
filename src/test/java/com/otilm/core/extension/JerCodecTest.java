@@ -232,4 +232,29 @@ class JerCodecTest {
                     .hasMessageContaining("must have a, or have b");
         }
     }
+
+    @Nested
+    class WrittenNull {
+
+        private final Structure withMarker = new Structure(
+                List.of(new Member("marker", of(Primitive.NULL), null, false, true, null)));
+
+        @Test
+        void aWrittenNullIsAnAsn1Null_notAnOmission() throws Exception {
+            // JSON null is the JER value of NULL; {"marker":null} encodes 05 00 where {} encodes nothing.
+            assertThat(der("{\"marker\":null}", withMarker)).isEqualTo("30020500");
+            assertThat(der("{}", withMarker)).isEqualTo("3000");
+        }
+
+        @Test
+        void aWrittenNullForAnotherTypeIsRefusedByThatType() {
+            Structure optionalInteger = new Structure(
+                    List.of(new Member("tier", of(Primitive.INTEGER), null, false, true, null)));
+
+            assertThatThrownBy(() -> der("{\"tier\":null}", optionalInteger))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.tier")
+                    .hasMessageContaining("whole number");
+        }
+    }
 }

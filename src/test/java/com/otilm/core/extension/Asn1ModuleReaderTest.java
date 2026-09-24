@@ -393,6 +393,21 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aTypeDefinedTwice() {
+            // The second definition would otherwise replace the first, constraints and all.
+            assertThatThrownBy(() -> read("P ::= INTEGER (1..3)\nP ::= INTEGER"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'P' twice");
+        }
+
+        @Test
+        void aMemberNamedTwice() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a INTEGER, a BOOLEAN }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'a' twice");
+        }
+
+        @Test
         void aTruncatedModule() {
             assertThatThrownBy(() -> Asn1ModuleReader.read("M DEFINITIONS ::= BEGIN Probe ::= SEQUENCE {"))
                     .isInstanceOf(ValidationException.class);
