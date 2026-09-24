@@ -1,0 +1,8 @@
+-- RFC 5280 4.2.1.9 Basic Constraints
+BasicConstraintsModule DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+BasicConstraints ::= SEQUENCE {
+     cA                      BOOLEAN DEFAULT FALSE,
+     pathLenConstraint       INTEGER (0..MAX) OPTIONAL }
+
+END

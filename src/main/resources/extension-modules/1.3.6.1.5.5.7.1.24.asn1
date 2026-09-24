@@ -1,0 +1,7 @@
+-- RFC 7633 TLS Feature. The RFC's own Features carries no SIZE; the 16-bit bound is this
+-- platform's, because a TLS extension type is a 16-bit number.
+TlsFeatureModule DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+Features ::= SEQUENCE OF INTEGER (0..65535)
+
+END

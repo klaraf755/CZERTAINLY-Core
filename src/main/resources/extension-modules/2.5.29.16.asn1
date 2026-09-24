@@ -1,0 +1,8 @@
+-- RFC 3280 4.2.1.4 Private Key Usage Period
+PrivateKeyUsagePeriodModule DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+PrivateKeyUsagePeriod ::= SEQUENCE {
+     notBefore       [0]     GeneralizedTime OPTIONAL,
+     notAfter        [1]     GeneralizedTime OPTIONAL }
+
+END
