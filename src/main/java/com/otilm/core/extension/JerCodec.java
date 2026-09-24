@@ -257,6 +257,20 @@ public final class JerCodec {
                 : literal;
     }
 
+    /**
+     * An object leaf has a fixed vocabulary; a key outside it is a misspelling, and naming it points at the mistake.
+     */
+    private static void rejectUnknownMembers(JsonNode object, String path, String... allowed) {
+        List<String> permitted = List.of(allowed);
+        for (Iterator<String> names = object.fieldNames(); names.hasNext();) {
+            String written = names.next();
+            if (!permitted.contains(written)) {
+                throw refusal(path + "." + written,
+                        "is not a member here; the members are " + String.join(" and ", permitted));
+            }
+        }
+    }
+
     private static void rejectUndeclared(JsonNode value, List<Member> declared, String path) {
         for (Iterator<String> names = value.fieldNames(); names.hasNext();) {
             String written = names.next();
@@ -324,13 +338,25 @@ public final class JerCodec {
         return new DEROctetString(octets);
     }
 
-    /** X.697 gives a variable-length bit string as a value and a count of the bits that matter. */
+    /**
+     * X.697 gives a variable-length bit string as a value and a count of the bits that matter. The count is checked as
+     * strictly as a member name: a misspelt {@code length} would otherwise fall back to every bit of the octets and
+     * encode a different value than was written, and a non-integer count would be coerced rather than refused.
+     */
     private static ASN1Encodable bitString(JsonNode value, Scalar type, String path) {
         if (!value.isObject() || !value.has(VALUE)) {
             throw refusal(path, "must carry a hexadecimal value and a length in bits");
         }
+        rejectUnknownMembers(value, path, VALUE, LENGTH);
         byte[] octets = hex(value.get(VALUE), path + "." + VALUE);
-        int bits = value.has(LENGTH) ? value.get(LENGTH).asInt(-1) : octets.length * 8;
+        int bits = octets.length * 8;
+        if (value.has(LENGTH)) {
+            JsonNode length = value.get(LENGTH);
+            if (!length.isIntegralNumber() || !length.canConvertToInt()) {
+                throw refusal(path + "." + LENGTH, "must be a whole number of bits");
+            }
+            bits = length.intValue();
+        }
         if (bits < 0 || bits > octets.length * 8 || bits <= (octets.length - 1) * 8) {
             throw refusal(path + "." + LENGTH, "does not match the %d octets written".formatted(octets.length));
         }

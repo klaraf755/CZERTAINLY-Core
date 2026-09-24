@@ -271,4 +271,35 @@ class JerCodecTest {
                     .hasMessageContaining("whole number");
         }
     }
+
+    @Nested
+    class BitStringMembers {
+
+        private final Structure withBits = new Structure(List.of(new Member("ku", of(Primitive.BIT_STRING))));
+
+        @Test
+        void aMisspeltLengthIsRefusedNotDefaulted() {
+            // Ignored, "lenght" would leave every bit of the octet significant and encode 03 02 00 80 for a value
+            // whose author meant one bit.
+            assertThatThrownBy(() -> der("{\"ku\":{\"value\":\"80\",\"lenght\":1}}", withBits))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.ku.lenght")
+                    .hasMessageContaining("value and length");
+        }
+
+        @Test
+        void aLengthThatIsNotAWholeNumberIsRefusedNotCoerced() {
+            for (String length : List.of("\"1\"", "1.5", "true")) {
+                assertThatThrownBy(() -> der("{\"ku\":{\"value\":\"80\",\"length\":" + length + "}}", withBits))
+                        .as(length)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("$.ku.length");
+            }
+        }
+
+        @Test
+        void theSpelledMembersStillEncode() throws Exception {
+            assertThat(der("{\"ku\":{\"value\":\"80\",\"length\":1}}", withBits)).isEqualTo("3004" + "03020780");
+        }
+    }
 }
