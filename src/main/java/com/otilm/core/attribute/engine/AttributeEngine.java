@@ -73,6 +73,7 @@ import com.otilm.core.oid.OidHandler;
 import com.otilm.core.oid.OidRecord;
 import com.otilm.core.security.authz.SecurityResourceFilter;
 import com.otilm.core.serialization.ObjectMapperFactory;
+import com.otilm.core.service.writer.AttributeDefinitionWriter;
 import com.otilm.core.util.AttributeDefinitionUtils;
 import com.otilm.core.util.AuthHelper;
 import com.otilm.core.util.ConstraintSchemas;
@@ -124,6 +125,7 @@ public class AttributeEngine {
     private AttributeRelationRepository attributeRelationRepository;
     private AttributeContentItemRepository attributeContentItemRepository;
     private AttributeContent2ObjectRepository attributeContent2ObjectRepository;
+    private AttributeDefinitionWriter attributeDefinitionWriter;
 
     private AuthHelper authHelper;
 
@@ -135,6 +137,11 @@ public class AttributeEngine {
     @Autowired
     public void setAttributeDefinitionRepository(AttributeDefinitionRepository attributeDefinitionRepository) {
         this.attributeDefinitionRepository = attributeDefinitionRepository;
+    }
+
+    @Autowired
+    public void setAttributeDefinitionWriter(AttributeDefinitionWriter attributeDefinitionWriter) {
+        this.attributeDefinitionWriter = attributeDefinitionWriter;
     }
 
     @Autowired
@@ -775,11 +782,7 @@ public class AttributeEngine {
                                 UUID.fromString(String.valueOf(RequestAttribute.getUuid())), RequestAttribute.getName())
                         .orElse(null);
                 if (missingDefinition != null) {
-                    // update operation - if attribute is retrieved by callback, we do not know its operation
-                    if (!Objects.equals(missingDefinition.getOperation(), operation)) {
-                        missingDefinition.setOperation(operation);
-                        attributeDefinitionRepository.save(missingDefinition);
-                    }
+                    claimUnknownOperation(missingDefinition, operation);
                     definitionsMapping.put(RequestAttribute.getName(), missingDefinition);
                 }
             }
@@ -1047,6 +1050,7 @@ public class AttributeEngine {
                         dataAttribute.getUuid(), dataAttribute.getName(), dataAttribute.getType(),
                         connectorUuid.toString());
             }
+            claimUnknownOperation(attributeDefinition, operation);
         } else {
             logger
                     .debug("Registering new data attribute with UUID {} and name {} for connector {}",
@@ -1081,6 +1085,17 @@ public class AttributeEngine {
             attributeDefinition.setDefinition(dataAttribute);
         }
         attributeDefinitionRepository.save(attributeDefinition);
+    }
+
+    /**
+     * A listing call can publish a definition before anything says what it serves; the first write that knows claims
+     * it.
+     */
+    private void claimUnknownOperation(AttributeDefinition definition, String operation) {
+        if (operation != null && definition.getOperation() == null
+                && attributeDefinitionWriter.claimOperation(definition.getUuid(), operation)) {
+            definition.setOperation(operation);
+        }
     }
 
     private static DataAttribute copyWithoutContent(DataAttribute dataAttribute) {
