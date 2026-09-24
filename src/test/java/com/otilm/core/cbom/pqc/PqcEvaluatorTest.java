@@ -57,6 +57,121 @@ class PqcEvaluatorTest {
     }
 
     /**
+     * {@link PqcRules#MIN_SYMMETRIC_KEY_BITS} gated the material size arms and nothing else, so an algorithm reached
+     * {@code ready} on its family alone with {@code parameterSet = 64} sitting unread in the input.
+     */
+    @Test
+    void anAlgorithmIsDecidedByTheSizeItRecords() {
+        for (String undersized : new String[]{"AES-64", "RC6-64"}) {
+            PqcDecision decision = verdictOf(algorithm(undersized));
+            assertThat(decision.verdict()).describedAs("algorithm %s", undersized).isEqualTo(PqcVerdict.NOT_READY);
+            assertThat(decision.ruleId()).describedAs("algorithm %s", undersized).isEqualTo("SYMMETRIC-UNDERSIZED");
+            assertThat(decision.evaluatedFields()).describedAs("algorithm %s", undersized).containsKey("parameterSet");
+        }
+        for (String adequate : new String[]{"AES", "AES-128", "AES-256", "aes128-gcm", "AES-256-GCM"}) {
+            assertThat(verdictOf(algorithm(adequate)).ruleId())
+                    .describedAs("algorithm %s", adequate)
+                    .isEqualTo("SYMMETRIC-READY");
+        }
+    }
+
+    /**
+     * {@code key} is outside {@link PqcRules#SYMMETRIC_MATERIAL} because CycloneDX lets it cover a private key too, and
+     * only the size arms read {@code materialSize} -- so one 64-bit AES key read ready under one type and notReady
+     * under the other. The material arms keep their own rule id for the rows they do claim.
+     */
+    @Test
+    void aSizedKeyIsDecidedByItsSizeWhateverTypeItCarries() {
+        assertThat(verdictOf(material("AES", "key", 64)).ruleId()).isEqualTo("SYMMETRIC-UNDERSIZED");
+        assertThat(verdictOf(material("AES", "key", 256)).ruleId()).isEqualTo("SYMMETRIC-READY");
+        assertThat(verdictOf(material("AES", "secret-key", 64)).ruleId())
+                .describedAs("a row the material arms do claim keeps the rule id an operator already queries")
+                .isEqualTo("MATERIAL-SYMMETRIC-WEAK");
+        assertThat(verdictOf(material("RSA-2048", "key", 2048)).ruleId())
+                .describedAs("the size floor is a symmetric question, and a private key typed `key` is not one")
+                .isEqualTo("CLASSICAL-SHOR");
+    }
+
+    /**
+     * SP 800-56C is a key-derivation construction, so its strength is the hash it is instantiated with. A row carrying
+     * the family and no parameter set, variant or OID was served "no quantum algorithm breaks it outright" -- an
+     * assertion nothing in the row supports.
+     */
+    @Test
+    void aConstructionWithNoRecordedPrimitiveIsUnknownRatherThanReady() {
+        for (String uninstantiated : new String[]{"concatenationkdf", "HMAC", "CMAC", "HKDF", "PBKDF2", "PBES2"}) {
+            PqcDecision decision = verdictOf(algorithm(uninstantiated));
+            assertThat(decision.verdict()).describedAs("algorithm %s", uninstantiated).isEqualTo(PqcVerdict.UNKNOWN);
+            assertThat(decision.ruleId())
+                    .describedAs("algorithm %s", uninstantiated)
+                    .isEqualTo("CONSTRUCTION-UNINSTANTIATED");
+        }
+        assertThat(verdictOf(algorithm("PBKDF2-HMAC")).ruleId())
+                .describedAs("a construction named over another construction is no more instantiated than either half")
+                .isEqualTo("CONSTRUCTION-UNINSTANTIATED");
+        for (String instantiated : new String[]{
+                "HMAC-SHA256",
+                "hmacsha2",
+                "AES-CMAC",
+                "HKDF-SHA256",
+                "PBKDF2-HMAC-SHA256"}) {
+            assertThat(verdictOf(algorithm(instantiated)).ruleId())
+                    .describedAs("algorithm %s", instantiated)
+                    .isEqualTo("SYMMETRIC-READY");
+        }
+        for (String fixesItsOwn : new String[]{"Argon2id", "bcrypt", "scrypt", "Fernet", "Poly1305"}) {
+            assertThat(verdictOf(algorithm(fixesItsOwn)).ruleId())
+                    .describedAs("algorithm %s fixes its primitive in its own specification", fixesItsOwn)
+                    .isEqualTo("SYMMETRIC-READY");
+        }
+    }
+
+    /**
+     * RIPEMD covers a broken 128-bit digest as well as RIPEMD-160, so naming it no more instantiates a construction
+     * than naming nothing: the construction is exactly as ambiguous as its primitive.
+     */
+    @Test
+    void aConstructionOverAnAmbiguousPrimitiveIsAsAmbiguousAsThePrimitive() {
+        for (String overAmbiguous : new String[]{
+                "HMAC-RIPEMD",
+                "HMAC-RIPEMD128",
+                "HMAC-RIPEMD160",
+                "PBKDF2-HMAC-RIPEMD160",
+                "HMAC-GOST"}) {
+            PqcDecision decision = verdictOf(algorithm(overAmbiguous));
+            assertThat(decision.verdict()).describedAs("algorithm %s", overAmbiguous).isEqualTo(PqcVerdict.UNKNOWN);
+            assertThat(decision.ruleId())
+                    .describedAs("algorithm %s", overAmbiguous)
+                    .isEqualTo("FAMILY-AMBIGUOUS-COMPONENT");
+        }
+        assertThat(verdictOf(algorithm("RIPEMD160")).ruleId())
+                .describedAs("the primitive alone, which the construction must not outrank")
+                .isEqualTo("FAMILY-AMBIGUOUS");
+    }
+
+    /**
+     * A construction's key is a key like any other, so the size floor holds for it. The number in its name is not one:
+     * AES has no 64-bit key, and {@code AES-CMAC-96} is RFC 4494's 96-bit tag over AES-128.
+     */
+    @Test
+    void aConstructionKeyIsHeldToTheFloorButItsTagLengthIsNot() {
+        for (String construction : new String[]{"HMAC-SHA256", "CMAC-AES", "HKDF-SHA256"}) {
+            assertThat(verdictOf(material(construction, "key", 64)).ruleId())
+                    .describedAs("a 64-bit %s key", construction)
+                    .isEqualTo("SYMMETRIC-UNDERSIZED");
+            assertThat(verdictOf(material(construction, "key", 256)).ruleId())
+                    .describedAs("a 256-bit %s key", construction)
+                    .isEqualTo("SYMMETRIC-READY");
+        }
+        assertThat(verdictOf(material("HMAC-SHA256", "secret-key", 64)).ruleId()).isEqualTo("MATERIAL-SYMMETRIC-WEAK");
+        for (String tagged : new String[]{"AES-CMAC-96", "CMAC-AES-64", "HMAC-SHA256-96", "HMAC-SHA-512/256"}) {
+            assertThat(verdictOf(algorithm(tagged)).ruleId())
+                    .describedAs("algorithm %s", tagged)
+                    .isEqualTo("SYMMETRIC-READY");
+        }
+    }
+
+    /**
      * An adjudication this rule set makes rather than inherits: reporting DES as post-quantum ready is true and
      * useless, so a classically broken primitive is not ready either -- under its own rule id, because the migration it
      * needs is a different one.
@@ -173,15 +288,73 @@ class PqcEvaluatorTest {
         }
     }
 
-    /** A key's name may record the hybrid KEX that produced it; a 256-bit session key is still a 256-bit key. */
+    /**
+     * A key's name may record the hybrid KEX that produced it, and a 256-bit session key is still a 256-bit key --
+     * while that KEX is one a migration would keep. SIKE was broken classically in 2022, so a secret agreed with it is
+     * recoverable today, and reporting it as 256 bits of symmetric strength states the opposite of the finding.
+     */
     @Test
-    void aSessionKeyNamedAfterItsHybridKexIsDecidedAsAKey() {
-        PqcDecision sessionKey = verdictOf(material("sntrup761x25519-sha512", "shared-secret", 256));
+    void aSessionKeyIsItsOwnStrengthOnlyWhileItsHybridKexHolds() {
+        PqcDecision sessionKey = verdictOf(material("X25519-ML-KEM-768", "shared-secret", 256));
         assertThat(sessionKey.verdict()).isEqualTo(PqcVerdict.READY);
         assertThat(sessionKey.ruleId()).isEqualTo("MATERIAL-SYMMETRIC-READY");
+        assertThat(sessionKey.evaluatedFields())
+                .describedAs("the size arms consulted the name, so the name is evidence")
+                .containsEntry("name", "x25519-ml-kem-768");
+
+        for (String[] kexAndRuleId : new String[][]{
+                {"ecdh-nistp384-sike-p434-sha384@openquantumsafe.org", "PQC-HYBRID-PQC-BROKEN"},
+                {"X25519-SIKEp434", "PQC-HYBRID-PQC-BROKEN"},
+                {"X25519-Kyber768", "PQC-HYBRID-PQC-PRESTANDARD"},
+                {"sntrup761x25519-sha512", "PQC-HYBRID-PQC-PRESTANDARD"}}) {
+            PqcDecision secret = verdictOf(material(kexAndRuleId[0], "shared-secret", 256));
+            assertThat(secret.verdict()).describedAs("secret from %s", kexAndRuleId[0]).isEqualTo(PqcVerdict.NOT_READY);
+            assertThat(secret.ruleId())
+                    .describedAs("a key takes the rule id the algorithm of its own name takes")
+                    .isEqualTo(kexAndRuleId[1])
+                    .isEqualTo(verdictOf(algorithm(kexAndRuleId[0])).ruleId());
+        }
         assertThat(verdictOf(material("X25519-Kyber768", "private-key", null)).ruleId())
                 .describedAs("the private key of a hybrid KEM is still decided by its post-quantum half")
                 .isEqualTo("PQC-HYBRID-PQC-PRESTANDARD");
+    }
+
+    /** A key and an algorithm spelt identically are served the same answer, whatever size the key declares. */
+    @Test
+    void aKeyInheritsTheFindingItsOwnNameCarries() {
+        for (String name : new String[]{
+                "HMAC-MD5",
+                "HmacSHA1",
+                "3DES-CMAC",
+                "CKM_RSA_AES_KEY_WRAP",
+                "ECIES-X25519-XSalsa20-Poly1305"}) {
+            PqcDecision key = verdictOf(material(name, "shared-secret", 256));
+            assertThat(key.verdict()).describedAs("key %s", name).isEqualTo(PqcVerdict.NOT_READY);
+            assertThat(key.ruleId()).describedAs("key %s", name).isEqualTo(verdictOf(algorithm(name)).ruleId());
+        }
+    }
+
+    /**
+     * A hybrid's classical half is Shor-breakable by design -- that is what the construction is for -- so only a
+     * classically broken component overrules it, with or without the classical half present.
+     */
+    @Test
+    void aBrokenDigestInsideAHybridIsNotMaskedByItsPostQuantumHalf() {
+        assertThat(verdictOf(algorithm("X25519-ML-KEM-768-MD5")).ruleId()).isEqualTo("CLASSICAL-LEGACY-COMPONENT");
+        assertThat(verdictOf(algorithm("ML-KEM-MD5")).ruleId()).isEqualTo("CLASSICAL-LEGACY-COMPONENT");
+        PqcDecision electedLegacy = verdictOf(algorithm("PBKDF1-X25519-ML-KEM-768"));
+        assertThat(electedLegacy.ruleId())
+                .describedAs("a broken primitive the grammar elected as the family is in no secondary token")
+                .isEqualTo("CLASSICAL-LEGACY-COMPONENT");
+        assertThat(electedLegacy.evaluatedFields()).containsEntry("algorithmFamily", "PBKDF1");
+        assertThat(verdictOf(material("PBKDF1-X25519-ML-KEM-768", "shared-secret", 256)).ruleId())
+                .isEqualTo("CLASSICAL-LEGACY-COMPONENT");
+        assertThat(verdictOf(algorithm("X25519-ML-KEM-768")).ruleId())
+                .describedAs("the classical half is what a hybrid is for, and never the finding")
+                .isEqualTo("PQC-HYBRID-PQC-STANDARDIZED");
+        assertThat(verdictOf(algorithm("SLH-DSA-SHAKE-256f")).ruleId())
+                .describedAs("every FIPS 205 parameter-set name carries a hash token, and none of them is a finding")
+                .isEqualTo("PQC-STANDARDIZED");
     }
 
     @Test
@@ -240,8 +413,8 @@ class PqcEvaluatorTest {
         assertThat(verdictOf(material("AES-256", "secret-key", 256)).ruleId())
                 .describedAs("an unbroken family must still be decided by the size it states")
                 .isEqualTo("MATERIAL-SYMMETRIC-READY");
-        assertThat(verdictOf(material("sntrup761x25519-sha512", "shared-secret", 256)).ruleId())
-                .describedAs("a session key labelled with its hybrid KEX is its own strength, not the KEX's")
+        assertThat(verdictOf(material("X25519-ML-KEM-768", "shared-secret", 256)).ruleId())
+                .describedAs("a session key labelled with a hybrid KEX a migration would keep is its own strength")
                 .isEqualTo("MATERIAL-SYMMETRIC-READY");
     }
 
@@ -453,6 +626,22 @@ class PqcEvaluatorTest {
         JsonNode undersized = component("algorithm", "ML-KEM-768",
                 "{\"relatedCryptoMaterialProperties\":{\"type\":\"secret-key\",\"size\":64}}");
         assertThat(verdictOf(undersized).ruleId()).isEqualTo("PQC-STANDARDIZED");
+
+        JsonNode overstated = component("algorithm", "AES-64",
+                "{\"relatedCryptoMaterialProperties\":{\"type\":\"secret-key\",\"size\":256}}");
+        assertThat(verdictOf(overstated).ruleId())
+                .describedAs("an algorithm's size is its parameter set; a strayed block must not overrule it")
+                .isEqualTo("SYMMETRIC-UNDERSIZED");
+
+        JsonNode understated = component("algorithm", "AES-256",
+                "{\"relatedCryptoMaterialProperties\":{\"type\":\"secret-key\",\"size\":64}}");
+        assertThat(verdictOf(understated).ruleId()).isEqualTo("SYMMETRIC-READY");
+
+        JsonNode strayedConstruction = component("algorithm", "HMAC-SHA256",
+                "{\"relatedCryptoMaterialProperties\":{\"type\":\"key\",\"size\":64}}");
+        assertThat(verdictOf(strayedConstruction).ruleId())
+                .describedAs("an algorithm row, so the strayed key size is not read; a material row's is")
+                .isEqualTo("SYMMETRIC-READY");
     }
 
     /**

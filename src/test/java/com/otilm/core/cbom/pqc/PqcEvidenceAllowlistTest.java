@@ -39,7 +39,7 @@ class PqcEvidenceAllowlistTest {
 
     @Test
     void everyRuleDeclaresOnlyAllowlistedFields() {
-        assertThat(PqcRules.rulesFor(normalizer))
+        assertThat(PqcRules.rulesFor(normalizer, input -> true))
                 .allSatisfy(rule -> assertThat(PqcRules.EVIDENCE_FIELDS)
                         .describedAs("rule %s declares %s", rule.id(), rule.readsFields())
                         .containsAll(rule.readsFields()));
@@ -52,7 +52,8 @@ class PqcEvidenceAllowlistTest {
                         "Falcon-512", "FN-DSA-512", "X25519-ML-KEM-768", "X25519-Kyber768", "X-Wing", "GOST",
                         "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "Acme Proprietary Wrap", "HMAC-SHA256", "3DES-CMAC",
                         "ChaCha20-Poly1305", "XMSS-SHA2_10_256", "HSS-LMS", "bcrypt", "Classic McEliece 348864",
-                        "X25519-ML-KEM-\uFF17\uFF16\uFF18", "RSA-\uFF12\uFF10\uFF14\uFF18", "\uFF32\uFF33\uFF21-2048");
+                        "X25519-ML-KEM-\uFF17\uFF16\uFF18", "RSA-\uFF12\uFF10\uFF14\uFF18", "\uFF32\uFF33\uFF21-2048",
+                        "AES-64", "concatenationkdf");
     }
 
     /**

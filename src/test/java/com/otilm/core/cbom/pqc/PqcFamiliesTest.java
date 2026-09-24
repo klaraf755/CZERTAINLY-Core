@@ -63,6 +63,48 @@ class PqcFamiliesTest {
                         .isNotNull());
     }
 
+    /**
+     * A construction is a family like any other, so a spelling that drifted from the ratified one would silently stop
+     * gating -- the row would read ready on its family again and nothing would say so.
+     */
+    @Test
+    void everyConstructionIsARatifiedUnbrokenSymmetricFamily() {
+        assertThat(PqcFamilies.constructions())
+                .allSatisfy(construction -> assertThat(PqcFamilies.of(construction))
+                        .describedAs("construction %s", construction)
+                        .isEqualTo(FamilyClass.QUANTUM_RESISTANT_SYMMETRIC));
+    }
+
+    /**
+     * The other half of that gate, closed so a new symmetric family fails the build until it is classified. Outside the
+     * constructions a family reads ready on membership alone, which is safe only for a primitive or for a construction
+     * that fixes its own -- Argon2 on BLAKE2b, Fortuna on SHA-256 and AES, Fernet on AES-128-CBC and HMAC-SHA256.
+     */
+    @Test
+    void everyUnbrokenSymmetricFamilyIsAConstructionAPrimitiveOrFixesItsOwn() {
+        Set<String> primitives = Set
+                .of("AES", "ARIA", "CAMELLIA", "SEED", "SM4", "Serpent", "Twofish", "CAST6", "RC6", "Ascon", "ChaCha",
+                        "ChaCha20", "Salsa20", "RABBIT", "HC", "SNOW3G", "ZUC", "SHA-2", "SHA-3", "BLAKE2", "BLAKE3",
+                        "SM3", "Whirlpool", "SipHash", "Poly1305");
+        Set<String> fixTheirOwnPrimitive = Set
+                .of("Argon2", "bcrypt", "scrypt", "yescrypt", "Fortuna", "Fernet", "MILENAGE", "TUAK");
+
+        Set<String> symmetric = new TreeSet<>();
+        PqcFamilies.dispositions().forEach((family, disposition) -> {
+            if (disposition == FamilyClass.QUANTUM_RESISTANT_SYMMETRIC) {
+                symmetric.add(family);
+            }
+        });
+        Set<String> classified = new TreeSet<>(PqcFamilies.constructions());
+        classified.addAll(primitives);
+        classified.addAll(fixTheirOwnPrimitive);
+
+        assertThat(symmetric).isEqualTo(classified);
+        assertThat(PqcFamilies.constructions())
+                .doesNotContainAnyElementsOf(primitives)
+                .doesNotContainAnyElementsOf(fixTheirOwnPrimitive);
+    }
+
     @Test
     void theBrokenCandidatesAreSeparatedFromTheMerelySuperseded() {
         assertThat(PqcFamilies.of("SIKE")).isEqualTo(FamilyClass.PQC_BROKEN);

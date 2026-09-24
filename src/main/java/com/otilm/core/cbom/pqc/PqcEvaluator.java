@@ -70,7 +70,7 @@ public class PqcEvaluator {
 
     public PqcEvaluator(AssetNormalizer normalizer) {
         this.normalizer = normalizer;
-        this.rules = PqcRules.rulesFor(normalizer);
+        this.rules = PqcRules.rulesFor(normalizer, this::nameCarriesNoFinding);
     }
 
     /**
@@ -85,14 +85,35 @@ public class PqcEvaluator {
                                 nistQuantumSecurityLevel);
             }
         }
-        // Past the table: an algorithm the grammar did not record as a hybrid, or key material the material rules did
-        // not claim. A hybrid still decides before its family, because the family is whichever half the grammar
-        // elected.
+        return nameDecision(input, nistQuantumSecurityLevel);
+    }
+
+    /**
+     * What the asset's own name says about it. A hybrid decides before its family, because the family is whichever half
+     * the grammar elected; a weak component decides before an unbroken family.
+     *
+     * <p>
+     * Reached two ways. Past the rule table it is the answer -- an algorithm the grammar did not record as a hybrid, or
+     * key material the material rules did not claim. And the size arms consult it before claiming a row, so a key and
+     * the algorithm of the same name cannot be served opposite findings.
+     */
+    private PqcDecision nameDecision(PqcRuleInput input, Integer nistQuantumSecurityLevel) {
         List<String> hybrid = hybridComponentsOf(input);
         if (!hybrid.isEmpty()) {
             return hybridDecision(input, hybrid, HYBRID_RULE, nistQuantumSecurityLevel);
         }
         return componentOrFamilyDecision(input, nistQuantumSecurityLevel);
+    }
+
+    /**
+     * Whether the asset's own name is free of a weak-crypto finding -- which is not the same as clearing as ready, and
+     * the difference is the common case. A 256-bit secret key naming no family at all resolves to
+     * {@code FAMILY-UNRESOLVED}, and nearly every secret key in the corpus names no family, so gating the size arms on
+     * a ready verdict would empty them. An {@code unknown} name says nothing about the key; a {@code notReady} one is
+     * the finding, and a finding must reach the row whatever tier it was keyed on.
+     */
+    private boolean nameCarriesNoFinding(PqcRuleInput input) {
+        return nameDecision(input.withoutMaterialSize(), null).verdict() != PqcVerdict.NOT_READY;
     }
 
     /**
@@ -198,6 +219,12 @@ public class PqcEvaluator {
             return componentOrFamilyDecision(input, nistQuantumSecurityLevel);
         }
         PqcRuleInput hybrid = input.withHybridComponents(components);
+        if (namesAClassicallyBrokenComponent(input)) {
+            FamilyClass legacy = FamilyClass.CLASSICAL_LEGACY;
+            return decision(legacy.verdict(), legacy.ruleId() + "-COMPONENT", componentReason(legacy),
+                    List.of(PqcRules.ALGORITHM_FAMILY, PqcRules.HYBRID_COMPONENTS, PqcRules.VARIANT, PqcRules.NAME),
+                    hybrid, nistQuantumSecurityLevel);
+        }
         FamilyClass decisive = components
                 .stream()
                 .map(this::dispositionOfComponent)
@@ -217,6 +244,17 @@ public class PqcEvaluator {
                 : "A hybrid construction whose post-quantum component is not standardised: " + decisive.reason();
         return decision(decisive.verdict(), rule.id() + "-" + decisive.ruleId(), reason, rule.readsFields(), hybrid,
                 nistQuantumSecurityLevel);
+    }
+
+    /**
+     * A hybrid's classical half is Shor-breakable by design -- that is what the construction is for -- so only a
+     * classically broken component overrules it. The MD5 in {@code X25519-ML-KEM-768-MD5} is not that classical half
+     * but a broken digest inside the construction. The elected family counts too: the secondary tokens exclude it, so
+     * the PBKDF1 that {@code PBKDF1-X25519-ML-KEM-768} elects appears in neither the variant nor those tokens.
+     */
+    private boolean namesAClassicallyBrokenComponent(PqcRuleInput input) {
+        return PqcFamilies.of(ratifiedFamily(input.algorithmFamily())) == FamilyClass.CLASSICAL_LEGACY
+                || weakSecondaryTokens(input).containsValue(FamilyClass.CLASSICAL_LEGACY);
     }
 
     private boolean isShorBreakable(String component) {
@@ -246,6 +284,12 @@ public class PqcEvaluator {
                     List.of(PqcRules.ALGORITHM_FAMILY, PqcRules.CURVE, PqcRules.VARIANT), input,
                     nistQuantumSecurityLevel);
         }
+        if (disposition == FamilyClass.QUANTUM_RESISTANT_SYMMETRIC) {
+            PqcDecision strength = symmetricStrengthDecision(input, nistQuantumSecurityLevel);
+            if (strength != null) {
+                return strength;
+            }
+        }
         if (disposition == FamilyClass.PQC_STANDARDIZED && isOneTimeSignature(input)) {
             return decision(PqcVerdict.UNKNOWN, "PQC-ONE-TIME-SIGNATURE",
                     "A one-time signature scheme, which SP 800-208 approves only as a component within LMS or XMSS and "
@@ -254,6 +298,88 @@ public class PqcEvaluator {
         }
         return decision(disposition.verdict(), disposition.ruleId(), disposition.reason(),
                 List.of(PqcRules.ALGORITHM_FAMILY, PqcRules.VARIANT), input, nistQuantumSecurityLevel);
+    }
+
+    /**
+     * What an unbroken symmetric or hash-based family's recorded strength says, or {@code null} when the family verdict
+     * stands. Family membership is not a strength claim: a construction cannot make one without naming its primitive,
+     * and a sized primitive cannot make one below the floor.
+     */
+    private PqcDecision symmetricStrengthDecision(PqcRuleInput input, Integer nistQuantumSecurityLevel) {
+        boolean construction = PqcFamilies.isConstruction(ratifiedFamily(input.algorithmFamily()));
+        if (construction) {
+            FamilyClass primitive = namedPrimitive(input);
+            if (primitive == FamilyClass.FAMILY_AMBIGUOUS) {
+                return decision(PqcVerdict.UNKNOWN, FamilyClass.FAMILY_AMBIGUOUS.ruleId() + "-COMPONENT",
+                        "A construction built on a primitive whose family covers both a classically broken and an "
+                                + "unbroken member, and the recorded properties do not say which",
+                        List.of(PqcRules.ALGORITHM_FAMILY, PqcRules.VARIANT), input, nistQuantumSecurityLevel);
+            }
+            if (primitive == null) {
+                return decision(PqcVerdict.UNKNOWN, "CONSTRUCTION-UNINSTANTIATED",
+                        "A construction whose strength is that of the primitive it is built on, which this record "
+                                + "does not name",
+                        List.of(PqcRules.ALGORITHM_FAMILY, PqcRules.VARIANT, PqcRules.PARAMETER_SET), input,
+                        nistQuantumSecurityLevel);
+            }
+        }
+        Integer bits = recordedSizeBits(input, construction);
+        return bits == null || bits >= PqcRules.MIN_SYMMETRIC_KEY_BITS
+                ? null
+                : decision(PqcVerdict.NOT_READY, "SYMMETRIC-UNDERSIZED",
+                        "A symmetric or hash-based primitive whose recorded size is below 128 bits, so Grover's "
+                                + "algorithm leaves it with no adequate strength",
+                        List
+                                .of(PqcRules.ALGORITHM_FAMILY, PqcRules.PARAMETER_SET, PqcRules.MATERIAL_SIZE,
+                                        PqcRules.VARIANT),
+                        input, nistQuantumSecurityLevel);
+    }
+
+    /**
+     * The disposition of the primitive a construction's secondary tokens name, or {@code null} when they name none.
+     * Another construction does not count, since the pair says no more than either half, and a bare parameter set does
+     * not either. An ambiguous primitive outranks an unbroken one: a construction cannot be vouched for over a part
+     * that may be the broken member.
+     */
+    private FamilyClass namedPrimitive(PqcRuleInput input) {
+        FamilyClass named = null;
+        for (String token : secondaryTokens(input)) {
+            String family = ratifiedFamilyOfToken(token);
+            FamilyClass disposition = PqcFamilies.of(family);
+            if (disposition == FamilyClass.FAMILY_AMBIGUOUS) {
+                return disposition;
+            }
+            if (disposition == FamilyClass.QUANTUM_RESISTANT_SYMMETRIC && !PqcFamilies.isConstruction(family)) {
+                named = disposition;
+            }
+        }
+        return named;
+    }
+
+    /**
+     * The size the row records, from whichever slot carries it, and only inside the ratified size band.
+     *
+     * <p>
+     * {@code materialSize} counts only on a material row. A producer bug stamps the material block onto algorithms too,
+     * and there the row's own size is its parameter set -- a strayed size would otherwise decide {@code AES-64} ready
+     * and {@code AES-256} undersized. On a construction the parameter set is not a key size but its primitive's digest
+     * or a tag length, so only a material row's key counts.
+     */
+    private Integer recordedSizeBits(PqcRuleInput input, boolean construction) {
+        if (input.assetType() == CryptographicAssetType.RELATED_CRYPTO_MATERIAL && input.materialSize() != null) {
+            return input.materialSize();
+        }
+        return construction ? null : withinRatifiedSizeBand(input.parameterSet());
+    }
+
+    /**
+     * Below the floor bits and bytes cannot be told apart: {@code 32} is AES-256 in bytes and a broken key in bits, and
+     * the rules must not guess. Above the ceiling a number is a cost or round count rather than a size.
+     */
+    private Integer withinRatifiedSizeBand(Integer bits) {
+        return bits != null && bits >= normalizer.tables().sizeMin() && bits <= normalizer.tables().sizeMax()
+                ? bits
+                : null;
     }
 
     /**
@@ -274,6 +400,10 @@ public class PqcEvaluator {
         return normalizer.tables().familyToken(anySpelling);
     }
 
+    private FamilyClass dispositionOfToken(String token) {
+        return PqcFamilies.of(ratifiedFamilyOfToken(token));
+    }
+
     /**
      * A component token onto its ratified family, whole spelling first.
      *
@@ -282,12 +412,11 @@ public class PqcEvaluator {
      * stripping first turns {@code sha-1} into {@code sha} and {@code sha-2} into {@code sha}, which resolve to nothing
      * -- so {@code HMAC-SHA1} read {@code ready}. The normalizer documents the same trap on its own token folding.
      */
-    private FamilyClass dispositionOfToken(String token) {
-        FamilyClass whole = PqcFamilies.of(ratifiedFamily(token));
-        if (whole != null) {
-            return whole;
-        }
-        return dispositionOfComponent(token);
+    private String ratifiedFamilyOfToken(String token) {
+        String whole = ratifiedFamily(token);
+        return PqcFamilies.of(whole) != null
+                ? whole
+                : ratifiedFamily(FAMILY_SIZE_SUFFIX.matcher(token).replaceFirst(""));
     }
 
     // ---- The input shape ------------------------------------------------------------------------------------------
@@ -307,10 +436,22 @@ public class PqcEvaluator {
         if (family == null && fields.assetType() == CryptographicAssetType.RELATED_CRYPTO_MATERIAL) {
             family = ratifiedFamily(normalizer.familyFromName(fields.name()));
         }
-        List<String> hybrid = normalizer.hybridComponents(family, normalizer.secondaryTokens(fields.name(), family));
+        String secondary = normalizer.secondaryTokens(fields.name(), family);
+        List<String> hybrid = normalizer.hybridComponents(family, secondary);
         return new PqcRuleInput(fields.assetType(), family, parameterSet(fields.parameterSet()), fields.curve(),
-                fields.mode(), fields.padding(), fields.variant(), fields.name(), hybrid,
+                fields.mode(), fields.padding(), variantOf(fields, secondary), fields.name(), hybrid,
                 materialType(mergedCryptoProperties), materialSize(mergedCryptoProperties));
+    }
+
+    /**
+     * Related material takes its variant from the secondary tokens of its name, because the weak-component doctrine
+     * reads that field and the material tier derives none of its own.
+     */
+    private static String variantOf(CryptoAssetIdentityFields fields, String secondaryTokens) {
+        if (fields.variant() != null || fields.assetType() != CryptographicAssetType.RELATED_CRYPTO_MATERIAL) {
+            return fields.variant();
+        }
+        return secondaryTokens == null || secondaryTokens.isEmpty() ? null : secondaryTokens;
     }
 
     /** The normalizer's routing vocabulary onto the column's enum; the unroutable tier has no producer spelling. */
@@ -365,8 +506,7 @@ public class PqcEvaluator {
 
     /**
      * Held to the ratified size band the normalizer applies to name-derived sizes, so {@code -1}, {@code 0} and a byte
-     * count are absent rather than republished as a strength. Below the floor bits and bytes cannot be told apart:
-     * {@code 32} is AES-256 in bytes and a broken key in bits, and the rules must not guess.
+     * count are absent rather than republished as a strength.
      */
     Integer materialSize(JsonNode cryptoProperties) {
         JsonNode material = cryptoProperties == null ? null : cryptoProperties.get(RELATED_MATERIAL);
@@ -378,8 +518,7 @@ public class PqcEvaluator {
         if (size == null || !size.isIntegralNumber() || !size.canConvertToInt()) {
             return null;
         }
-        int bits = size.intValue();
-        return bits >= normalizer.tables().sizeMin() && bits <= normalizer.tables().sizeMax() ? bits : null;
+        return withinRatifiedSizeBand(size.intValue());
     }
 
     /** Non-integral reads as absent: one producer wrote a string there, and the wire field promises a level. */

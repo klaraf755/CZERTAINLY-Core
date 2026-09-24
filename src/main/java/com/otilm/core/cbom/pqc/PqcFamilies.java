@@ -2,6 +2,7 @@ package com.otilm.core.cbom.pqc;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Every ratified algorithm family and what it means for post-quantum readiness, keyed on the ratified spelling.
@@ -20,6 +21,15 @@ public final class PqcFamilies {
 
     private static final Map<String, FamilyClass> DISPOSITION = build();
 
+    /**
+     * Families that are constructions over a primitive the family name does not fix, so the name alone does not support
+     * a readiness claim. Only those whose primitive genuinely varies: a construction that fixes its own primitive in
+     * its specification is decided by its family like any other, and {@code PqcFamiliesTest} names them.
+     */
+    private static final Set<String> CONSTRUCTIONS = Set
+            .of("HMAC", "CMAC", "UMAC", "HKDF", "ANSI-KDF", "SP800-108", "SP800-56C", "SSH-KDF", "TLS-PRF", "IKE-PRF",
+                    "PBKDF2", "PBES2", "PBMAC1", "CTR_DRBG", "HMAC_DRBG", "Hash_DRBG");
+
     private PqcFamilies() {
     }
 
@@ -30,6 +40,17 @@ public final class PqcFamilies {
 
     public static Map<String, FamilyClass> dispositions() {
         return DISPOSITION;
+    }
+
+    /**
+     * Whether a ratified family spelling names a construction whose strength comes from a primitive it does not fix.
+     */
+    public static boolean isConstruction(String ratifiedSpelling) {
+        return ratifiedSpelling != null && CONSTRUCTIONS.contains(ratifiedSpelling);
+    }
+
+    public static Set<String> constructions() {
+        return CONSTRUCTIONS;
     }
 
     private static Map<String, FamilyClass> build() {
