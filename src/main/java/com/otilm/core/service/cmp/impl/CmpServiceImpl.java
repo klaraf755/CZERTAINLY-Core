@@ -308,7 +308,7 @@ public class CmpServiceImpl implements CmpExternalService {
             return buildOk(pkiResponse);
         } catch (CmpBaseException e) {
             return errorResponse(tid, logPrefix, requestAsString, "processing", e,
-                    buildProcessingErrorResponse(configuration, pkiRequest, e));
+                    buildProcessingErrorResponse(configuration, pkiRequest, e.toPKIBody()));
         } catch (IOException e) {
             return errorResponse(tid, logPrefix, requestAsString, "parsing", e,
                     PkiMessageError
@@ -317,7 +317,7 @@ public class CmpServiceImpl implements CmpExternalService {
         } catch (Exception e) {
             ownDoomedTransaction();
             return errorResponse(tid, logPrefix, requestAsString, "handling", e,
-                    safeUnprotectedError(pkiRequest.getHeader(), e));
+                    buildProcessingErrorResponse(configuration, pkiRequest, safeErrorBody(e)));
         }
     }
 
@@ -362,15 +362,14 @@ public class CmpServiceImpl implements CmpExternalService {
     }
 
     /**
-     * Builds the CMP error response for a domain exception raised during processing. The response is protected with the
+     * Builds the CMP error response for a failure raised during processing. The response is protected with the
      * profile's response strategy when possible; if that construction itself fails (e.g. a misconfigured profile), it
-     * falls back to an unprotected CMP error carrying the same domain body. RFC 4210 permits unprotected error
-     * messages, and this guarantees the endpoint always answers with {@code application/pkixcmp} rather than leaking to
-     * the generic JSON error handler.
+     * falls back to an unprotected CMP error carrying the same body. RFC 4210 permits unprotected error messages, and
+     * this guarantees the endpoint always answers with {@code application/pkixcmp} rather than leaking to the generic
+     * JSON error handler.
      */
     private PKIMessage buildProcessingErrorResponse(ConfigurationContext configuration, PKIMessage pkiRequest,
-            CmpBaseException e) {
-        PKIBody errorBody = e.toPKIBody();
+            PKIBody errorBody) {
         // In registration mode the response MAC is keyed by the matched registration's challenge. A rejection
         // raised before any registration matched (unresolved senderKID, wrong state, wrong MAC) has no such
         // key; protecting with the empty shared secret would produce a MAC anyone can reproduce, so the error
@@ -507,9 +506,12 @@ public class CmpServiceImpl implements CmpExternalService {
      * {@link #safeCmpDetail(Exception, String)}.
      */
     static PKIMessage safeUnprotectedError(PKIHeader header, Exception e) {
+        return PkiMessageError.unprotectedMessage(header, safeErrorBody(e));
+    }
+
+    private static PKIBody safeErrorBody(Exception e) {
         return PkiMessageError
-                .unprotectedMessage(header, PkiMessageError
-                        .generateBody(PKIFailureInfo.systemFailure, safeCmpDetail(e, "CMP request handling failed")));
+                .generateBody(PKIFailureInfo.systemFailure, safeCmpDetail(e, "CMP request handling failed"));
     }
 
     /**

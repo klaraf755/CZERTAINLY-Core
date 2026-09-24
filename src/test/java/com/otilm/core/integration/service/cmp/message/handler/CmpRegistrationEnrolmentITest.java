@@ -429,6 +429,18 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     }
 
     @Test
+    void anUnexpectedHandlerFailureAfterTheChallengeMatchedIsAnsweredProtected() throws Exception {
+        Certificate registration = seedRegistration(SUBJECT_DN, null, CertificateState.REGISTERED);
+        given(pollFeature.pollCertificate(any(), any(), any(), any()))
+                .willThrow(new IllegalStateException("poll broke"));
+
+        ResponseEntity<byte[]> response = post(irMessage(SUBJECT_DN, null, CHALLENGE, registration.getUuid()));
+
+        PKIMessage error = PKIMessage.getInstance(response.getBody());
+        assertNotNull(error.getProtection(), "the matched challenge keys the error's MAC");
+    }
+
+    @Test
     void macRevocationIsRejectedNotAuthenticatedByAnEmptySecret() throws Exception {
         // Registration mode stores no shared secret; a MAC-protected revocation must not authenticate against
         // an empty key. It is rejected at protection validation, never reaching the revocation handler.
