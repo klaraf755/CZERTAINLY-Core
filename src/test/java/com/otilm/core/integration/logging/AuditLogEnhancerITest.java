@@ -8,6 +8,9 @@ import com.otilm.core.logging.AuditLogEnhancer;
 import com.otilm.core.util.BaseSpringBootTest;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import static com.otilm.core.util.builders.CertificateBuilder.aCertificate;
@@ -33,12 +36,16 @@ class AuditLogEnhancerITest extends BaseSpringBootTest {
         assertThat(enriched).containsExactly(new ResourceObjectIdentity("0a1b2c", issued.getUuid()));
     }
 
-    @Test
-    void namesCertificateWithoutSerialNumberAsNotIssued() {
-        Certificate notIssued = certificateRepository.save(aCertificate().withCommonName("notIssued").build());
+    // A caller may pass the certificate's own serial number as the name, blank until the certificate is issued
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = "  ")
+    void namesCertificateWithoutSerialNumberAsNotIssued(String serialNumber) {
+        Certificate notIssued = certificateRepository
+                .save(aCertificate().withCommonName("notIssued").withSerialNumber(serialNumber).build());
 
         List<ResourceObjectIdentity> enriched = auditLogEnhancer
-                .enrichObjectIdentities(List.of(new ResourceObjectIdentity(null, notIssued.getUuid())),
+                .enrichObjectIdentities(List.of(new ResourceObjectIdentity(serialNumber, notIssued.getUuid())),
                         Resource.CERTIFICATE);
 
         assertThat(enriched).containsExactly(new ResourceObjectIdentity("notIssued (Not Issued)", notIssued.getUuid()));
