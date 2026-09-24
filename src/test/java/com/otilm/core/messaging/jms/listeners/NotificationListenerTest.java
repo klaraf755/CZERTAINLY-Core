@@ -291,6 +291,15 @@ class NotificationListenerTest {
     }
 
     @Test
+    void unnamedHostObjectRendersAsItsUuid() {
+        CommentEventData data = commentEventData(null, "no name to show");
+        data.setObjectName(null);
+
+        assertEquals("requester commented on RA Profile '%s'".formatted(data.getObjectUuid()),
+                renderedCommentNotification(ResourceEvent.COMMENT_CREATED, data)[0]);
+    }
+
+    @Test
     void replyRendersAsAThreadReply() {
         String[] rendered = renderedCommentNotification(ResourceEvent.COMMENT_CREATED,
                 commentEventData(UUID.randomUUID(), "on it"));

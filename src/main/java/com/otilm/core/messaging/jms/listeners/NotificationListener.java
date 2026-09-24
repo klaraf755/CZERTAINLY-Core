@@ -508,6 +508,11 @@ public class NotificationListener implements MessageProcessor<NotificationMessag
         return notificationData;
     }
 
+    // The host object's name is not guaranteed; its UUID still tells two notifications apart
+    private static String hostObjectLabel(CommentEventData data) {
+        return data.getObjectName() == null ? uuidText(data.getObjectUuid()) : data.getObjectName();
+    }
+
     private static String uuidText(UUID uuid) {
         return uuid == null ? null : uuid.toString();
     }
@@ -944,7 +949,7 @@ public class NotificationListener implements MessageProcessor<NotificationMessag
                 yield commentNotification("%s %s on %s '%s'"
                         .formatted(data.getAuthorUsername(),
                                 data.getParentUuid() == null ? "commented" : "replied to a comment thread",
-                                data.getResource().getLabel(), data.getObjectName()),
+                                data.getResource().getLabel(), hostObjectLabel(data)),
                         data);
             }
             case COMMENT_RESOLVED -> {
@@ -952,7 +957,7 @@ public class NotificationListener implements MessageProcessor<NotificationMessag
                 yield commentNotification("%s %s a comment thread on %s '%s'"
                         .formatted(data.getResolvedByUsername(),
                                 Boolean.TRUE.equals(data.getResolved()) ? "resolved" : "reopened",
-                                data.getResource().getLabel(), data.getObjectName()),
+                                data.getResource().getLabel(), hostObjectLabel(data)),
                         data);
             }
             case CERTIFICATE_REGISTERED -> {
