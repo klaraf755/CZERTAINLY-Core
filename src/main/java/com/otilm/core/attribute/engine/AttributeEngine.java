@@ -1,7 +1,6 @@
 package com.otilm.core.attribute.engine;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.NotFoundException;
@@ -65,13 +64,15 @@ import com.otilm.core.dao.repository.AttributeContent2ObjectRepository;
 import com.otilm.core.dao.repository.AttributeContentItemRepository;
 import com.otilm.core.dao.repository.AttributeDefinitionRepository;
 import com.otilm.core.dao.repository.AttributeRelationRepository;
+import com.otilm.core.extension.ExtensionType;
+import com.otilm.core.extension.ExtensionTypes;
+import com.otilm.core.extension.JerCodec;
 import com.otilm.core.model.SearchFieldObject;
 import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.oid.OidHandler;
 import com.otilm.core.oid.OidRecord;
 import com.otilm.core.security.authz.SecurityResourceFilter;
 import com.otilm.core.serialization.ObjectMapperFactory;
-import com.otilm.core.util.AsnJsonCodec;
 import com.otilm.core.util.AttributeDefinitionUtils;
 import com.otilm.core.util.AuthHelper;
 import com.otilm.core.util.ExtensionSchemas;
@@ -837,9 +838,9 @@ public class AttributeEngine {
     }
 
     /**
-     * Grammar and registry-shape layers for JSON values of DER-encoded extension mappings. The constraint layer is not
-     * here: it already runs with the other constraint types in the general content validation above. Only JSON values
-     * (starting with '{') are checked; base64 values are the legacy path and were never shape-checked.
+     * The ASN.1-type layer for values of DER-encoded extension mappings. The constraint layer is not here: it already
+     * runs with the other constraint types in the general content validation above. An OID whose module is registered
+     * holds its values to that type; one nobody has described takes DER as bytes, which nothing here can check.
      */
     private static List<ValidationError> validateJsonExtensionValues(
             Map<String, AttributeDefinition> definitionsMapping, List<RequestAttribute> requestAttributes) {
@@ -871,41 +872,61 @@ public class AttributeEngine {
                 : definition.getName();
         for (Object item : content) {
             if (!(item instanceof AttributeContent attributeContent)
-                    || !(attributeContent.getData() instanceof String value) || !value.strip().startsWith("{")) {
+                    || !(attributeContent.getData() instanceof String value)) {
                 continue;
             }
-            checkJsonExtensionValue(value, extensionOids, label, errors);
+            checkExtensionValue(value, extensionOids, label, errors);
         }
         return errors;
     }
 
-    /** Checks one tree value: that the grammar accepts it, then that each mapped OID permits it. */
-    private static void checkJsonExtensionValue(String value, List<String> extensionOids, String label,
+    /**
+     * Checks one submitted value against each OID the definition maps. An OID whose ASN.1 module is registered holds
+     * its value to that type; an OID nobody has described takes DER as bytes, which the renderer decodes and nothing
+     * here can say more about.
+     */
+    private static void checkExtensionValue(String value, List<String> extensionOids, String label,
             List<ValidationError> errors) {
-        JsonNode tree;
-        try {
-            tree = AsnJsonCodec.parse(value);
-            AsnJsonCodec.encode(tree);
-        } catch (ValidationException e) {
-            errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
-            return;
-        }
         for (String extensionOid : extensionOids) {
             String structuredTarget = StructuredExtensionCodec.structuredTargetName(extensionOid);
-            if (structuredTarget != null) {
+            if (structuredTarget != null && looksWritten(value)) {
                 // Authoring a new opaque mapping for these OIDs is already refused; a legacy one must not gain
                 // a second, weaker way in. The typed target takes its values from a closed vocabulary, so it
-                // cannot express a malformed one - a hand-written tree can.
+                // cannot express a malformed one.
                 errors
                         .add(ValidationError
-                                .create("Extension value of attribute {} cannot be a JSON tree: extension {} has the {} mapping target, which is the only way to set it",
+                                .create("Extension value of attribute {} cannot be written here: extension {} has the {} mapping target, which is the only way to set it",
                                         label, extensionOid, structuredTarget));
                 continue;
             }
-            for (String violation : ExtensionSchemas.validateShape(extensionOid, tree)) {
-                errors.add(ValidationError.create("Extension value of attribute {} {}", label, violation));
+            if (!looksWritten(value)) {
+                // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
+                continue;
+            }
+            ExtensionType type = ExtensionTypes.resolve(extensionOid).orElse(null);
+            if (type == null) {
+                errors
+                        .add(ValidationError
+                                .create("Extension value of attribute {}: extension {} has no registered ASN.1 module, so its value must be base64-encoded DER",
+                                        label, extensionOid));
+                continue;
+            }
+            try {
+                JerCodec.encodeFromString(value, type);
+            } catch (ValidationException e) {
+                errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
             }
         }
+    }
+
+    /**
+     * Whether a value was written rather than supplied as bytes. Base64 cannot begin with any of these, so a definition
+     * stored before the structured targets existed keeps projecting its DER blob untouched, while a value someone typed
+     * for the same OID is still refused.
+     */
+    private static boolean looksWritten(String value) {
+        String trimmed = value.strip();
+        return !trimmed.isEmpty() && "{[\"".indexOf(trimmed.charAt(0)) >= 0;
     }
 
     /** The DER-encoded extension OIDs a definition maps, resolved against the registry cache. */

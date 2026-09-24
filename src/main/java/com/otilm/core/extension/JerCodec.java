@@ -1,6 +1,10 @@
 package com.otilm.core.extension;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.core.extension.ExtensionType.Choice;
 import com.otilm.core.extension.ExtensionType.Member;
@@ -9,6 +13,7 @@ import com.otilm.core.extension.ExtensionType.Range;
 import com.otilm.core.extension.ExtensionType.Repeated;
 import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
+import com.otilm.core.serialization.ObjectMapperFactory;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.HexFormat;
@@ -53,7 +58,34 @@ public final class JerCodec {
     private static final String VALUE = "value";
     private static final String LENGTH = "length";
 
+    /**
+     * Trailing text and duplicate keys are both silent losses otherwise: text after the first complete value is
+     * discarded, and a repeated key collapses to the last, so a value would encode something other than what was
+     * written.
+     */
+    private static final ObjectReader STRICT_READER = ((ObjectMapper) ObjectMapperFactory.wire())
+            .reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+
     private JerCodec() {
+    }
+
+    /** Parses a value's text. One place reads it, so a caller cannot judge a different value than it encodes. */
+    public static JsonNode parse(String json) {
+        try {
+            JsonNode value = STRICT_READER.readTree(json);
+            if (value == null) {
+                throw new ValidationException("Extension value is not well-formed JSON");
+            }
+            return value;
+        } catch (java.io.IOException e) {
+            throw new ValidationException("Extension value is not well-formed JSON");
+        }
+    }
+
+    public static byte[] encodeFromString(String json, ExtensionType type) {
+        return encode(parse(json), type);
     }
 
     public static byte[] encode(JsonNode value, ExtensionType type) {

@@ -8,6 +8,9 @@ import com.otilm.api.model.connector.v3.certificate.X509RequestContent;
 import com.otilm.api.model.core.certificate.GeneralNameType;
 import com.otilm.api.model.core.oid.ExtensionValueEncoding;
 import com.otilm.api.model.core.oid.OidCategory;
+import com.otilm.core.extension.ExtensionType;
+import com.otilm.core.extension.ExtensionTypes;
+import com.otilm.core.extension.JerCodec;
 import com.otilm.core.oid.OidHandler;
 import com.otilm.core.oid.OidRecord;
 import java.io.IOException;
@@ -100,7 +103,7 @@ public final class X509RequestContentRenderer {
             ASN1ObjectIdentifier oid = parseOid(ext.getOid());
             rejectDuplicateOid(seenOids, oid);
             boolean critical = effectiveCritical(ext.getOid(), ext.getCritical());
-            byte[] derValue = encodeExtensionValue(ext.getValue(), ext.getEncoding());
+            byte[] derValue = encodeExtensionValue(ext.getOid(), ext.getValue(), ext.getEncoding());
             gen.addExtension(oid, critical, derValue);
         }
 
@@ -123,9 +126,7 @@ public final class X509RequestContentRenderer {
         }
         ASN1ObjectIdentifier oid = parseOid(extensionOid);
         rejectDuplicateOid(seenOids, oid);
-        gen
-                .addExtension(oid, structuredExtensionCritical(extensionOid),
-                        encodeExtensionValue(base64Value, ExtensionValueEncoding.DER));
+        gen.addExtension(oid, structuredExtensionCritical(extensionOid), decodeBase64Der(base64Value));
     }
 
     /**
@@ -178,16 +179,16 @@ public final class X509RequestContentRenderer {
     /**
      * Encodes a requested extension's value into the DER bytes expected by {@code addExtension}. The
      * {@link ExtensionValueEncoding} declares how the supplied string is to be interpreted; {@code null} and
-     * {@code DER} both mean the value already carries a base64-encoded DER blob (backward-compatible default), other
-     * encodings wrap the string in the matching ASN.1 type.
+     * {@code DER} both mean DER, which the registry then decides how the value expresses.
      */
-    private static byte[] encodeExtensionValue(String value, ExtensionValueEncoding encoding) throws IOException {
+    private static byte[] encodeExtensionValue(String oid, String value, ExtensionValueEncoding encoding)
+            throws IOException {
         if (value == null) {
             throw new IOException("Extension value is required");
         }
         ExtensionValueEncoding effective = encoding == null ? ExtensionValueEncoding.DER : encoding;
         return switch (effective) {
-            case DER -> value.strip().startsWith("{") ? encodeJsonTree(value) : decodeBase64Der(value);
+            case DER -> derValue(oid, value);
             case UTF8_STRING -> new DERUTF8String(value).getEncoded(ASN1Encoding.DER);
             case IA5_STRING -> new DERIA5String(value).getEncoded(ASN1Encoding.DER);
             case PRINTABLE_STRING -> new DERPrintableString(value).getEncoded(ASN1Encoding.DER);
@@ -199,24 +200,36 @@ public final class X509RequestContentRenderer {
     }
 
     /**
-     * Encodes a structural ASN.1 JSON tree value. Wrong input is reported naming both accepted forms, because a
-     * DER-encoded extension takes either a JSON tree or base64 DER and the author needs to know which failed.
+     * A DER extension's value is either written out or handed over as bytes. Base64 cannot begin with any of the
+     * characters a written value starts with, so the two are told apart without ambiguity; the registry decides only
+     * whether writing one is possible at all, which needs the extension's ASN.1 type.
      */
-    private static final String WRONG_DER_FORM = "Invalid DER extension value; a value starting with '{' must be a valid ASN.1 JSON tree, "
-            + "anything else base64-encoded DER";
-
-    private static byte[] encodeJsonTree(String value) throws IOException {
+    private static byte[] derValue(String oid, String value) throws IOException {
+        if (!looksWritten(value)) {
+            return decodeBase64Der(value);
+        }
+        ExtensionType type = ExtensionTypes.resolve(oid).orElse(null);
+        if (type == null) {
+            throw new IOException(
+                    "Extension " + oid + " has no registered ASN.1 module, so its value must be base64-encoded DER");
+        }
         try {
-            return AsnJsonCodec.encodeFromString(value);
+            return JerCodec.encodeFromString(value, type);
         } catch (ValidationException e) {
-            // The codec's own message is controlled and names the offending node, so it is worth forwarding.
-            throw new IOException(WRONG_DER_FORM + ": " + e.getMessage(), e);
+            // The codec's message is controlled and names the member at fault, so it is worth forwarding.
+            throw new IOException("Invalid value for extension " + oid + ": " + e.getMessage(), e);
         } catch (RuntimeException e) {
-            // Anything else is a defect rather than bad input, so it must not be reported as invalid DER: the
-            // author would go looking at a value that is fine. Its message is uncontrolled and this one reaches
-            // the client through CertificateException, so only the cause carries the detail.
+            // Anything else is a defect rather than bad input, and must not be reported as an invalid value:
+            // the author would go looking at a value that is fine. This message reaches the client through
+            // CertificateException, so only the cause carries the detail.
             throw new IOException("Extension value could not be encoded", e);
         }
+    }
+
+    /** Whether a value was written out rather than handed over as bytes; base64 cannot begin with any of these. */
+    private static boolean looksWritten(String value) {
+        String trimmed = value.strip();
+        return !trimmed.isEmpty() && "{[\"".indexOf(trimmed.charAt(0)) >= 0;
     }
 
     /**
