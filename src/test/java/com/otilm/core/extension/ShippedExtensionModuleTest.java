@@ -108,11 +108,9 @@ class ShippedExtensionModuleTest {
     }
 
     @Test
-    void tlsFeatureBoundsItsValuesToSixteenBits() throws Exception {
+    void tlsFeatureCarriesUnboundedIntegersAsTheRfcWritesIt() throws Exception {
         assertThat(der("1.3.6.1.5.5.7.1.24", "[5]")).isEqualTo("3003020105");
-        assertThatThrownBy(() -> der("1.3.6.1.5.5.7.1.24", "[65536]"))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("permitted range");
+        assertThat(der("1.3.6.1.5.5.7.1.24", "[65536]")).isEqualTo("3005020301" + "0000");
     }
 
     @Test
