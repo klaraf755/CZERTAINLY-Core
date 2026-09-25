@@ -65,8 +65,7 @@ import com.otilm.core.dao.repository.AttributeContent2ObjectRepository;
 import com.otilm.core.dao.repository.AttributeContentItemRepository;
 import com.otilm.core.dao.repository.AttributeDefinitionRepository;
 import com.otilm.core.dao.repository.AttributeRelationRepository;
-import com.otilm.core.extension.ExtensionType;
-import com.otilm.core.extension.ExtensionTypes;
+import com.otilm.core.extension.ExtensionValues;
 import com.otilm.core.extension.JerCodec;
 import com.otilm.core.model.SearchFieldObject;
 import com.otilm.core.model.auth.ResourceAction;
@@ -860,8 +859,8 @@ public class AttributeEngine {
     }
 
     /**
-     * Grammar and registry-shape layers for one definition's submitted values. Package-private so the layering can be
-     * driven directly in a unit test; the map-based caller above is what production goes through.
+     * The ASN.1-type layer for one definition's submitted values. Package-private so it can be driven directly in a
+     * unit test; the map-based caller above is what production goes through.
      */
     static List<ValidationError> validateJsonExtensionValues(DataAttributeV3 definition,
             RequestAttribute requestAttribute) {
@@ -891,9 +890,14 @@ public class AttributeEngine {
      */
     private static void checkExtensionValue(String value, List<String> extensionOids, String label,
             List<ValidationError> errors) {
-        JsonNode written = JerCodec.tryParse(value).orElse(null);
+        JsonNode written;
+        try {
+            written = JerCodec.tryParse(value).orElse(null);
+        } catch (ValidationException e) {
+            errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
+            return;
+        }
         if (written == null) {
-            // Bytes: the renderer decodes them, and nothing here can say more about an opaque blob.
             return;
         }
         for (String extensionOid : extensionOids) {
@@ -915,29 +919,8 @@ public class AttributeEngine {
                                     label, extensionOid, structuredTarget));
             return;
         }
-        ExtensionType type;
         try {
-            type = ExtensionTypes.resolve(extensionOid).orElse(null);
-        } catch (ValidationException e) {
-            // A module written straight into the database, or saved before the reader tightened, must not
-            // turn every request for this extension into a 500. The cause is logged for whoever has to tell
-            // malformed stored data from a defect; the operator's message cannot say which.
-            logger.warn("Registered ASN.1 module for extension {} could not be read", extensionOid, e);
-            errors
-                    .add(ValidationError
-                            .create("Extension value of attribute {} cannot be checked: the registered ASN.1 module for extension {} is not readable",
-                                    label, extensionOid));
-            return;
-        }
-        if (type == null) {
-            errors
-                    .add(ValidationError
-                            .create("Extension value of attribute {}: extension {} has no registered ASN.1 module, so its value must be base64-encoded DER",
-                                    label, extensionOid));
-            return;
-        }
-        try {
-            JerCodec.encode(written, type);
+            ExtensionValues.encode(extensionOid, written);
         } catch (ValidationException e) {
             errors.add(ValidationError.create("Extension value of attribute {}: {}", label, e.getMessage()));
         }

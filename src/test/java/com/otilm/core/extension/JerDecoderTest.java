@@ -56,12 +56,11 @@ class JerDecoderTest {
 
     @Test
     void anOmittedDefaultComesBackAsItsDefault() {
-        // A reader wants the extension's effective content, not a transcript of which octets were present.
         assertThat(decode("3000", BASIC_CONSTRAINTS)).hasToString("{\"cA\":false}");
     }
 
     @Test
-    void readsEveryMemberOfTheWorkedExample() {
+    void readsEveryMemberOfANestedSequence() {
         assertThat(decode("30350C0B7376632D62696C6C696E670201013012160472656164060A2B06010401868D1F0201"
                 + "800F32303237313233313233353935395A", SERVICE_ENTITLEMENT))
                 .hasToString("{\"serviceId\":\"svc-billing\",\"tier\":1,"
@@ -71,8 +70,6 @@ class JerDecoderTest {
 
     @Test
     void tellsTwoIdenticallyTypedOptionalMembersApartByTheirTags() {
-        // The only thing distinguishing notBefore from notAfter is the context tag; without the type this
-        // encoding could be either.
         assertThat(decode("3011810F32303237313233313233353935395A", PKUP))
                 .hasToString("{\"notAfter\":\"20271231235959Z\"}");
         assertThat(decode("3011800F32303237313233313233353935395A", PKUP))
@@ -145,13 +142,14 @@ class JerDecoderTest {
     }
 
     @Test
-    void anImplicitlyTaggedOpaquePrimitiveIsReadBackAsOctets() {
+    void anImplicitlyTaggedOpaquePrimitiveIsRefused() {
+        // 81 02 AB CD could be an OCTET STRING, an INTEGER or anything else primitive; nothing says which.
         Structure withOpaque = new Structure(
                 List.of(new Member("blob", new Opaque("Anything"), 1, false, false, null)));
-        String der = "3004" + "8102" + "ABCD"; // an implicitly tagged 1 around the octets AB CD
 
-        assertThat(decode(der, withOpaque)).hasToString("{\"blob\":\"0402ABCD\"}");
-        roundTrips(der, withOpaque);
+        assertThatThrownBy(() -> decode("3004" + "8102" + "ABCD", withOpaque))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("$.blob");
     }
 
     @Test

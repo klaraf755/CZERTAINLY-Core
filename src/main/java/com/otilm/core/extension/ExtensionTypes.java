@@ -15,8 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * ships for a standard extension.
  *
  * <p>
- * An OID with no module is not an error. Its value is DER the requester supplies as bytes, which is what the platform
- * did before any of this and remains the way to carry an extension nobody has described.
+ * An OID with no module is not an error. Its value is DER the requester supplies as bytes, the way to carry an
+ * extension nobody has described.
  */
 public final class ExtensionTypes {
 

@@ -32,10 +32,12 @@ import java.util.function.BinaryOperator;
  * learns their module needs narrowing rather than discovering later that a construct was quietly dropped.
  *
  * <p>
- * Two rules from X.680 are enforced because the decoder depends on them. A module with no tagging clause is EXPLICIT
- * TAGS (13.3). And where a member is OPTIONAL or DEFAULT, its tag must differ from every member that could follow it in
- * the same run, and a CHOICE's alternatives must all carry distinct tags (26.3, 29.3) - without that, an encoding
- * cannot be read back to the members it came from, so such a module is refused rather than registered undecodable.
+ * The X.680 rules the decoder depends on are enforced. A module with no tagging clause is EXPLICIT TAGS (13.3). A tag
+ * on an untagged CHOICE or open type is explicit whatever the clause says, and IMPLICIT cannot be written on one
+ * (31.2.7, 31.2.9). Where a member is OPTIONAL or DEFAULT, its tag must differ from every member that could follow it
+ * in the same run, and a CHOICE's alternatives and a SET's members must all carry distinct tags (26.3, 27.3, 29.3) -
+ * without that, an encoding cannot be read back to the members it came from, so such a module is refused rather than
+ * registered undecodable.
  */
 public final class Asn1ModuleReader {
 
@@ -236,8 +238,16 @@ public final class Asn1ModuleReader {
                             + "support; its types are closed to the members they name");
         }
         implicitTags = IMPLICIT.equals(tagging);
+        if (peek().equals("EXPORTS") || peek().equals("IMPORTS")) {
+            throw new ValidationException(
+                    (UNSUPPORTED_USE + "; a module must define every type it names").formatted(peek()));
+        }
         while (!peek().equals("END") && at < tokens.size()) {
             String name = take();
+            if (Character.isLowerCase(name.charAt(0))) {
+                throw new ValidationException(("The extension's ASN.1 module assigns a value to '%s', which this "
+                        + "platform does not support; only type assignments are read").formatted(name));
+            }
             require("::=");
             if (assignments.containsKey(name)) {
                 // A second assignment would silently replace the first, constraints and all.
@@ -292,15 +302,18 @@ public final class Asn1ModuleReader {
                 node.kind = Kind.SCALAR;
                 node.primitive = Primitive.OID;
             }
-            case "ANY" -> {
+            case OPEN_TYPE -> {
                 if (accept("DEFINED")) {
                     require("BY");
                     take();
                 }
                 node.kind = Kind.OPAQUE;
-                node.reference = "ANY";
+                node.reference = OPEN_TYPE;
             }
             default -> named(node, token);
+        }
+        if (node.kind == Kind.SCALAR && peek().equals("{")) {
+            throw new ValidationException((UNSUPPORTED_USE + " on " + token).formatted("named numbers or bits"));
         }
         if (peek().equals("(")) {
             if (at + 1 < tokens.size() && tokens.get(at + 1).equals("WITH")) {
@@ -392,9 +405,8 @@ public final class Asn1ModuleReader {
             node.primitive = builtIn;
             return;
         }
-        if (!Character.isUpperCase(token.charAt(0))) {
-            throw new ValidationException(
-                    "The extension's ASN.1 module uses '%s', which this platform does not support".formatted(token));
+        if (UNSUPPORTED_TYPES.contains(token) || !Character.isUpperCase(token.charAt(0))) {
+            throw new ValidationException(UNSUPPORTED_USE.formatted("'" + token + "'"));
         }
         node.kind = Kind.REFERENCE;
         node.reference = token;
@@ -420,6 +432,10 @@ public final class Asn1ModuleReader {
         require("{");
         do {
             String name = take();
+            if (name.equals("...")) {
+                throw new ValidationException((UNSUPPORTED_USE + "; its types are closed to the members they name")
+                        .formatted("an extension marker"));
+            }
             if (!names.add(name)) {
                 // A JSON object cannot carry the same key twice, so a value could never name both.
                 throw new ValidationException(
@@ -429,6 +445,11 @@ public final class Asn1ModuleReader {
             Boolean explicit = null;
             if (accept("[")) {
                 tag = number(take());
+                if (tag < 0) {
+                    throw new ValidationException(
+                            "The extension's ASN.1 module tags '%s' with [%d]; a tag number cannot be negative"
+                                    .formatted(name, tag));
+                }
                 require("]");
                 if (accept(EXPLICIT)) {
                     explicit = true;
@@ -666,11 +687,49 @@ public final class Asn1ModuleReader {
                         .formatted(MAX_RESOLVED_MEMBERS));
             }
             ExtensionType type = resolve(member, member, inProgress);
-            // A tag on an untagged CHOICE is EXPLICIT whatever the module's default says.
-            boolean explicit = member.explicit != null ? member.explicit : type instanceof Choice || !implicitTags;
+            boolean open = member.tag != null && choiceOrOpenType(member, new HashSet<>());
+            if (open && Boolean.FALSE.equals(member.explicit)) {
+                throw new ValidationException(("The extension's ASN.1 module tags '%s' IMPLICIT, but a CHOICE or "
+                        + "open type has no tag of its own to replace; tag it EXPLICIT").formatted(member.name));
+            }
+            boolean explicit = member.explicit != null ? member.explicit : open || !implicitTags;
+            if (member.defaultValue != null) {
+                requireDefaultOfItsType(member, type);
+            }
             out.add(new Member(member.name, type, member.tag, explicit, member.optional, member.defaultValue));
         }
         return out;
+    }
+
+    /**
+     * X.680 31.2.7: a tag on an untagged CHOICE or open type is explicit even in an IMPLICIT module, because such a
+     * type has no tag of its own for an implicit one to replace. Followed through references, so that a CHOICE cut
+     * short by recursion is still seen for what it is.
+     */
+    private boolean choiceOrOpenType(Node node, Set<String> seen) {
+        return switch (node.kind) {
+            case CHOICE -> true;
+            case OPAQUE -> OPEN_TYPE.equals(node.reference);
+            case REFERENCE -> {
+                Node target = assignments.get(node.reference);
+                yield target != null && seen.add(node.reference) && choiceOrOpenType(target, seen);
+            }
+            default -> false;
+        };
+    }
+
+    /** A DEFAULT is compared to written values, so a literal of another type would match nothing or the wrong thing. */
+    private static void requireDefaultOfItsType(Node member, ExtensionType type) {
+        boolean fits = type instanceof Scalar(var primitive, var ranges, var sizes) && switch (primitive) {
+            case BOOLEAN -> member.defaultValue instanceof Boolean;
+            case INTEGER -> member.defaultValue instanceof BigInteger;
+            default -> false;
+        };
+        if (!fits) {
+            throw new ValidationException(("The extension's ASN.1 module gives '%s' a DEFAULT of %s, which is not a "
+                    + "value of its type; only BOOLEAN and INTEGER defaults are supported")
+                    .formatted(member.name, member.defaultValue));
+        }
     }
 
     /**
@@ -733,6 +792,19 @@ public final class Asn1ModuleReader {
 
     /** A tag that matches anything: an undescribed member's, which could carry any type at all. */
     private static final String ANY_TAG = "*";
+    private static final String OPEN_TYPE = "ANY";
+    private static final String UNSUPPORTED_USE = "The extension's ASN.1 module uses %s, which this platform does not support";
+
+    /**
+     * X.680 built-in types outside the subset. Named here so that a module using one is refused by that name; as
+     * unknown capitalised words they would otherwise read as references to types the module never defines.
+     */
+    private static final Set<String> UNSUPPORTED_TYPES = Set
+            .of("UTCTime", "BMPString", "VisibleString", "ISO646String", "TeletexString", "T61String", "NumericString",
+                    "UniversalString", "GeneralString", "GraphicString", "VideotexString", "ObjectDescriptor", "REAL",
+                    "ENUMERATED", "EMBEDDED", "EXTERNAL", "CHARACTER", "RELATIVE-OID", "OID-IRI", "RELATIVE-OID-IRI",
+                    "TIME", "DATE", "TIME-OF-DAY", "DATE-TIME", "DURATION", "INSTANCE", "CLASS", "TYPE-IDENTIFIER",
+                    "ABSTRACT-SYNTAX");
     private static final String IMPLICIT = "IMPLICIT";
     private static final String EXPLICIT = "EXPLICIT";
     private static final String AUTOMATIC = "AUTOMATIC";

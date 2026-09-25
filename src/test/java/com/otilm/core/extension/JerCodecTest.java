@@ -11,6 +11,7 @@ import com.otilm.core.extension.ExtensionType.Range;
 import com.otilm.core.extension.ExtensionType.Repeated;
 import com.otilm.core.extension.ExtensionType.Scalar;
 import com.otilm.core.extension.ExtensionType.Structure;
+import java.math.BigInteger;
 import java.util.HexFormat;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
@@ -44,7 +45,7 @@ class JerCodecTest {
                                     List.of(new Range(java.math.BigInteger.ZERO, null)), List.of()),
                             null, false, true, null)));
 
-    // ServiceEntitlement, the worked example
+    // A custom SEQUENCE with every scalar kind, a SEQUENCE OF CHOICE and an optional tagged member.
     private static final Structure SERVICE_ENTITLEMENT = new Structure(List
             .of(new Member("serviceId", new Scalar(Primitive.UTF8_STRING, List.of(), List.of(Range.of(5, 32)))),
                     new Member("tier", new Scalar(Primitive.INTEGER, List.of(Range.of(1, 3)), List.of())),
@@ -192,17 +193,15 @@ class JerCodecTest {
         void everyJerRootFormIsWritten() {
             for (String value : List
                     .of("{\"a\":1}", "[1]", "\"010203\"", "5", "-1", "true", "false", "null", "  {\"a\":1}", "\n[1]")) {
-                assertThat(JerCodec.looksWritten(value)).as(value).isTrue();
+                assertThat(JerCodec.tryParse(value)).as(value).isPresent();
             }
         }
 
         @Test
         void aNumberThatIsAlsoCompleteDerIsBytes() {
             // 108 digits: a JSON integer, and base64 of 81 bytes that are a complete private-class DER value
-            // (D7 4F + 79 content bytes). Where both readings exist, the bytes reading wins - it predates this
-            // feature. A number that is not complete DER stays a number: 1234 decodes to a length its bytes cannot
-            // fill,
-            // and a complete value followed by anything is not one value.
+            // (D7 4F + 79 content bytes). 1234 decodes to a length its bytes cannot fill, and a complete value
+            // followed by anything is not one value.
             String bothReadings = "108" + "0".repeat(105);
             assertThat(JerCodec.tryParse(bothReadings)).isEmpty();
             assertThat(JerCodec.tryParse("1234")).isPresent();
@@ -215,10 +214,23 @@ class JerCodecTest {
             // "1AEA" is D4 01 00, a private-class tag: base64 that begins with a digit and must still be bytes.
             for (String value : List
                     .of("MAYBAf8CAQA=", "BAMBAgM=", "AgEB", "AQH/", "oA==", "gA8y", "MBIWBA==", "1AEA")) {
-                assertThat(JerCodec.looksWritten(value)).as(value).isFalse();
+                assertThat(JerCodec.tryParse(value)).as(value).isEmpty();
             }
-            assertThat(JerCodec.looksWritten("")).isFalse();
-            assertThat(JerCodec.looksWritten(null)).isFalse();
+            assertThat(JerCodec.tryParse("")).isEmpty();
+            assertThat(JerCodec.tryParse(null)).isEmpty();
+        }
+
+        @Test
+        void aValueThatBeginsAsJsonButIsMalformedIsRefusedWithTheReason() {
+            // Base64 cannot begin with { [ " or -, so such a value was written, and its fault is reported rather
+            // than passed on as bytes for the renderer to fail on.
+            for (String value : List.of("{\"a\":1,}", "{\"a\":1,\"a\":2}", "{\"a\":1} x", "[1,2", "\"abc", "-")) {
+                assertThatThrownBy(() -> JerCodec.tryParse(value))
+                        .as(value)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("not well-formed JSON");
+            }
+            assertThatThrownBy(() -> JerCodec.tryParse("{\"a\":1,\"a\":2}")).hasMessageContaining("Duplicate");
         }
     }
 
@@ -255,7 +267,6 @@ class JerCodecTest {
 
         @Test
         void aWrittenNullIsAnAsn1Null_notAnOmission() throws Exception {
-            // JSON null is the JER value of NULL; {"marker":null} encodes 05 00 where {} encodes nothing.
             assertThat(der("{\"marker\":null}", withMarker)).isEqualTo("30020500");
             assertThat(der("{}", withMarker)).isEqualTo("3000");
         }
@@ -347,6 +358,85 @@ class JerCodecTest {
             assertThatThrownBy(() -> der("\"abcdef\"", five))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("6 characters");
+        }
+    }
+
+    @Nested
+    class NamedRefusals {
+
+        private Structure of(String name, Primitive primitive) {
+            return new Structure(List.of(new Member(name, JerCodecTest.of(primitive))));
+        }
+
+        @Test
+        void anOidThatIsNotOne() {
+            assertThatThrownBy(() -> der("{\"o\":\"1.2.x\"}", of("o", Primitive.OID)))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.o")
+                    .hasMessageContaining("OBJECT IDENTIFIER");
+        }
+
+        @Test
+        void textOutsideAStringTypesAlphabet() {
+            assertThatThrownBy(() -> der("{\"s\":\"a@b\"}", of("s", Primitive.PRINTABLE_STRING)))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.s")
+                    .hasMessageContaining("PrintableString");
+            assertThatThrownBy(() -> der("{\"s\":\"caf\u00e9\"}", of("s", Primitive.IA5_STRING)))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.s")
+                    .hasMessageContaining("IA5String");
+        }
+
+        @Test
+        void aGeneralizedTimeNotInDerForm() throws Exception {
+            Structure time = of("t", Primitive.GENERALIZED_TIME);
+            assertThat(der("{\"t\":\"20260101000000Z\"}", time)).isEqualTo("3011180F32303236303130313030303030305A");
+            for (String value : List.of("2026-01-01", "20260101000000+0100", "20260101000000", "20260101000000.5Z")) {
+                assertThatThrownBy(() -> der("{\"t\":\"" + value + "\"}", time))
+                        .as(value)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("$.t")
+                        .hasMessageContaining("YYYYMMDDHHMMSSZ");
+            }
+            assertThatThrownBy(() -> der("{\"t\":\"20261301000000Z\"}", time))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("calendar");
+        }
+
+        @Test
+        void anEmptyOpaqueValue() {
+            Structure withAny = new Structure(List.of(new Member("value", new Opaque("AttributeValue"))));
+            assertThatThrownBy(() -> der("{\"value\":\"\"}", withAny))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.value")
+                    .hasMessageContaining("cannot be empty");
+        }
+
+        @Test
+        void aPrimitiveUnderAnImplicitlyTaggedOpaqueMember() throws Exception {
+            // An implicit tag replaces the INTEGER's own; nothing could read 83 01 01 back as one.
+            Structure holder = new Structure(List.of(new Member("a", new Opaque("ORAddress"), 3, false, false, null)));
+            assertThat(der("{\"a\":\"3000\"}", holder)).isEqualTo("3002A300");
+            assertThatThrownBy(() -> der("{\"a\":\"020101\"}", holder))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.a")
+                    .hasMessageContaining("must be a SEQUENCE");
+        }
+    }
+
+    @Nested
+    class DefaultLiterals {
+
+        @Test
+        void aDefaultMatchesOnlyAValueOfItsOwnType() throws Exception {
+            Structure counted = new Structure(List
+                    .of(new Member("v", new Scalar(Primitive.INTEGER, List.of(), List.of()), null, false, false,
+                            BigInteger.valueOf(5))));
+            assertThat(der("{\"v\":5}", counted)).isEqualTo("3000");
+            assertThatThrownBy(() -> der("{\"v\":\"5\"}", counted))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("$.v");
         }
     }
 }

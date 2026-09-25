@@ -1,6 +1,5 @@
 package com.otilm.core.util;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.connector.v3.certificate.GeneralNameEntry;
 import com.otilm.api.model.connector.v3.certificate.RdnEntry;
@@ -9,9 +8,7 @@ import com.otilm.api.model.connector.v3.certificate.X509RequestContent;
 import com.otilm.api.model.core.certificate.GeneralNameType;
 import com.otilm.api.model.core.oid.ExtensionValueEncoding;
 import com.otilm.api.model.core.oid.OidCategory;
-import com.otilm.core.extension.ExtensionType;
-import com.otilm.core.extension.ExtensionTypes;
-import com.otilm.core.extension.JerCodec;
+import com.otilm.core.extension.ExtensionValues;
 import com.otilm.core.oid.OidHandler;
 import com.otilm.core.oid.OidRecord;
 import java.io.IOException;
@@ -19,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.security.auth.x500.X500Principal;
 import org.bouncycastle.asn1.ASN1Encodable;
@@ -37,16 +35,12 @@ import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.OtherName;
 import org.bouncycastle.util.encoders.Base64;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Pure-kernel renderer: maps {@link X509RequestContent} into BouncyCastle structures. No Spring context required; all
  * methods are static.
  */
 public final class X509RequestContentRenderer {
-
-    private static final Logger logger = LoggerFactory.getLogger(X509RequestContentRenderer.class);
 
     /**
      * Extensions the platform keeps critical regardless of criticalOverridable or registry defaults. BasicConstraints
@@ -210,34 +204,19 @@ public final class X509RequestContentRenderer {
      * whether writing one is possible at all, which needs the extension's ASN.1 type.
      */
     private static byte[] derValue(String oid, String value) throws IOException {
-        JsonNode written = JerCodec.tryParse(value).orElse(null);
-        if (written == null) {
-            return decodeBase64Der(value);
-        }
-        ExtensionType type;
+        Optional<byte[]> written;
         try {
-            type = ExtensionTypes.resolve(oid).orElse(null);
+            written = ExtensionValues.encodeWritten(oid, value);
         } catch (ValidationException e) {
-            // A stored module the reader cannot read is bad data, not a bad request. It is logged for whoever has
-            // to fix the row; the requester gets a controlled message rather than an escaping runtime exception.
-            logger.warn("Registered ASN.1 module for extension {} could not be read", oid, e);
-            throw new IOException("Extension " + oid + " has a registered ASN.1 module that cannot be read", e);
-        }
-        if (type == null) {
-            throw new IOException(
-                    "Extension " + oid + " has no registered ASN.1 module, so its value must be base64-encoded DER");
-        }
-        try {
-            return JerCodec.encode(written, type);
-        } catch (ValidationException e) {
-            // The codec's message is controlled and names the member at fault, so it is worth forwarding.
-            throw new IOException("Invalid value for extension " + oid + ": " + e.getMessage(), e);
+            // The message is controlled and names the extension and the member at fault, so it is worth forwarding.
+            throw new IOException(e.getMessage(), e);
         } catch (RuntimeException e) {
             // Anything else is a defect rather than bad input, and must not be reported as an invalid value:
             // the author would go looking at a value that is fine. This message reaches the client through
             // CertificateException, so only the cause carries the detail.
             throw new IOException("Extension value could not be encoded", e);
         }
+        return written.isPresent() ? written.get() : decodeBase64Der(value);
     }
 
     /**

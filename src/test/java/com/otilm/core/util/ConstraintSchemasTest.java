@@ -1,43 +1,13 @@
 package com.otilm.core.util;
 
 import com.otilm.api.exception.ValidationException;
-import com.otilm.api.model.core.oid.OidCategory;
-import com.otilm.core.oid.OidHandler;
-import com.otilm.core.oid.OidRecord;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConstraintSchemasTest {
-
-    // The OidHandler cache is process-wide static state shared across the whole test JVM.
-    // Snapshot CERTIFICATE_EXTENSION before this class replaces it; restore it afterwards.
-    private static Map<String, OidRecord> savedExtensionCache;
-
-    @BeforeAll
-    static void snapshotExtensionCache() {
-        Map<String, OidRecord> existing = OidHandler.getOidCache(OidCategory.CERTIFICATE_EXTENSION);
-        savedExtensionCache = existing == null ? null : new HashMap<>(existing);
-    }
-
-    @AfterAll
-    static void restoreExtensionCache() {
-        OidHandler
-                .cacheOidCategory(OidCategory.CERTIFICATE_EXTENSION,
-                        savedExtensionCache != null ? savedExtensionCache : new HashMap<>());
-    }
-
-    @BeforeEach
-    void clearExtensionRegistry() {
-        OidHandler.cacheOidCategory(OidCategory.CERTIFICATE_EXTENSION, new HashMap<>());
-    }
 
     @Test
     void requireValidSchemaAcceptsASchemaAndRejectsGarbage() {

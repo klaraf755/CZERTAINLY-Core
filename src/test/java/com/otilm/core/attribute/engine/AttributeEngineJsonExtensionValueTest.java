@@ -139,10 +139,8 @@ class AttributeEngineJsonExtensionValueTest {
 
     @Test
     void aCustomEntryDeclaringNoModuleLeavesTheValueUndescribed() {
-        // An operator's own entry is the effective one while it exists, so declaring no module means the
-        // extension is undescribed - not that the Core-shipped one for the same OID starts applying. Bytes are
-        // then the only form its value can take, and the refusal below is what proves the shipped module is not
-        // quietly standing in: under it, -1 would fail its range instead.
+        // The refusal below is what proves the shipped module is not quietly standing in for the operator's
+        // entry: under it, -1 would fail its range instead.
         register("2.5.29.19", ExtensionValueEncoding.DER, null);
         var definition = extensionDefinition("2.5.29.19");
 
@@ -166,6 +164,15 @@ class AttributeEngineJsonExtensionValueTest {
                 .satisfies(error -> assertThat(error.getErrorDescription())
                         .contains("cannot be checked")
                         .contains("1.3.6.1.4.1.99999.4.4"));
+    }
+
+    @Test
+    void aMalformedWrittenValueIsRefusedWithTheReason() {
+        var definition = extensionDefinition(CUSTOM_OID);
+
+        assertThat(AttributeEngine.validateJsonExtensionValues(definition, value(definition, "{\"count\":2,}")))
+                .singleElement()
+                .satisfies(error -> assertThat(error.getErrorDescription()).contains("not well-formed JSON"));
     }
 
     @Test

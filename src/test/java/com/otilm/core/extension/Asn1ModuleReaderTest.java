@@ -331,8 +331,7 @@ class Asn1ModuleReaderTest {
 
         @Test
         void aConstraintOnAReferenceNarrowsTheTypeItNames() throws Exception {
-            // Ext ::= Count (1..3) with Count ::= INTEGER admits 1 to 3; the range was being dropped with the
-            // reference.
+            // Ext ::= Count (1..3) with Count ::= INTEGER: the constraint narrows the type the reference names.
             ExtensionType type = read("Ext ::= Count (1..3)\nCount ::= INTEGER");
 
             assertThat(encode("2", type)).isEqualTo("020102");
@@ -513,6 +512,113 @@ class Asn1ModuleReaderTest {
         void aTruncatedModule() {
             assertThatThrownBy(() -> Asn1ModuleReader.read("M DEFINITIONS ::= BEGIN Probe ::= SEQUENCE {"))
                     .isInstanceOf(ValidationException.class);
+        }
+    }
+
+    @Nested
+    class RefusedByName {
+
+        @Test
+        void aBuiltInTypeOutsideTheSubset() {
+            for (String type : List
+                    .of("UTCTime", "BMPString", "VisibleString", "TeletexString", "NumericString", "REAL",
+                            "ENUMERATED")) {
+                assertThatThrownBy(() -> read("P ::= SEQUENCE { a " + type + " }"))
+                        .as(type)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("'" + type + "'")
+                        .hasMessageContaining("does not support");
+            }
+        }
+
+        @Test
+        void imports() {
+            assertThatThrownBy(() -> Asn1ModuleReader.read("""
+                    M DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                    IMPORTS Name FROM PKIX1Explicit88;
+                    P ::= SEQUENCE { a Name }
+                    END""")).isInstanceOf(ValidationException.class).hasMessageContaining("IMPORTS");
+        }
+
+        @Test
+        void aValueAssignment() {
+            assertThatThrownBy(() -> read("P ::= INTEGER\nlimit INTEGER ::= 5"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("assigns a value to 'limit'");
+        }
+
+        @Test
+        void namedNumbers() {
+            assertThatThrownBy(() -> read("P ::= INTEGER { low(0), high(1) }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("named numbers or bits");
+        }
+
+        @Test
+        void anExtensionMarker() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a INTEGER, ... }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("extension marker");
+        }
+
+        @Test
+        void aNegativeTag() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a [-1] INTEGER }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("[-1]");
+        }
+
+        @Test
+        void aDefaultOfAnotherType() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a BOOLEAN DEFAULT 7 }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("DEFAULT of 7");
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a UTF8String DEFAULT none }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("DEFAULT of none");
+        }
+    }
+
+    @Nested
+    class OpenTypeTagging {
+
+        @Test
+        void aTagOnAnOpenTypeIsExplicitInAnImplicitModule() throws Exception {
+            // X.680 31.2.7: ANY has no tag of its own to replace, so [0] wraps the value it carries.
+            ExtensionType holder = read("P ::= SEQUENCE { v [0] ANY }");
+            assertThat(encode("{\"v\":\"020105\"}", holder)).isEqualTo("3005A003020105");
+            assertThat(JerDecoder.decode(HexFormat.of().parseHex("3005A003020105"), holder))
+                    .hasToString("{\"v\":\"020105\"}");
+        }
+
+        @Test
+        void aTagOnAChoiceCutShortByRecursionIsStillExplicit() throws Exception {
+            ExtensionType tree = read("""
+                    Tree ::= SEQUENCE { child [0] Node OPTIONAL }
+                    Node ::= CHOICE { leaf [1] INTEGER, sub [2] SEQUENCE { child [0] Node OPTIONAL } }""");
+            // The inner child resolves to an opaque Node while Node is being resolved; its [0] must still wrap.
+            assertThat(encode("{\"child\":{\"sub\":{\"child\":\"810105\"}}}", tree))
+                    .isEqualTo("3009A007A205A003810105");
+        }
+
+        @Test
+        void implicitWrittenOnAChoiceOrOpenTypeIsRefused() {
+            for (String module : List
+                    .of("P ::= SEQUENCE { g [0] IMPLICIT G }\nG ::= CHOICE { x [1] INTEGER }",
+                            "P ::= SEQUENCE { v [0] IMPLICIT ANY }")) {
+                assertThatThrownBy(() -> read(module))
+                        .as(module)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("IMPLICIT")
+                        .hasMessageContaining("tag it EXPLICIT");
+            }
+        }
+
+        @Test
+        void implicitOnAnUndefinedReferenceIsStillHonoured() throws Exception {
+            // ORAddress in the shipped Name Constraints is exactly this: a SEQUENCE the module does not spell out.
+            ExtensionType holder = read("P ::= SEQUENCE { a [3] IMPLICIT ORAddress }");
+            assertThat(encode("{\"a\":\"3000\"}", holder)).isEqualTo("3002A300");
         }
     }
 }

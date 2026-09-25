@@ -194,21 +194,23 @@ public final class JerDecoder {
     }
 
     /**
-     * An implicit tag replaced the member's own tag, and for an undescribed member no type says what that was. The
-     * encoding still records whether it was constructed, which is enough to tell the two shapes an open type takes in
-     * practice apart: a SEQUENCE (ORAddress, EDIPartyName) or an OCTET STRING. This is the decoder's one inference, and
-     * it exists so that display of an extension the platform itself encoded does not fail on such a member.
+     * An implicit tag replaced the member's own tag, and for an undescribed member no type says what that was. A
+     * SEQUENCE is the one shape the encoder lets such a member take, because it is the one the encoding still
+     * identifies: the constructed bit survives the tag. A primitive here is malformed, and reading it as octets would
+     * present bytes of one type as another.
      */
     private static int opaqueUniversalTag(ASN1TaggedObject tagged) throws IOException {
         boolean constructed = (tagged.getEncoded(ASN1Encoding.DER)[0] & BERTags.CONSTRUCTED) != 0;
-        return constructed ? BERTags.SEQUENCE : BERTags.OCTET_STRING;
+        if (!constructed) {
+            throw new IOException("a primitive under an implicit tag has no type to read it as");
+        }
+        return BERTags.SEQUENCE;
     }
 
     private static int universalTag(ExtensionType type) {
         return switch (type) {
             case Structure(var members, var set, var alternatives) -> set ? BERTags.SET : BERTags.SEQUENCE;
             case Repeated(var element, var set, var sizes) -> set ? BERTags.SET : BERTags.SEQUENCE;
-            // A CHOICE cannot be implicitly tagged, and an undescribed member is handled before asking.
             case Choice ignored -> throw new IllegalStateException("a choice is never implicitly tagged");
             case Opaque ignored -> throw new IllegalStateException("resolved from the encoding, not the type");
             case Scalar(var primitive, var ranges, var sizes) -> switch (primitive) {

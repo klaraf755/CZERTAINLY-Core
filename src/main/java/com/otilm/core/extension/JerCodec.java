@@ -1,6 +1,7 @@
 package com.otilm.core.extension;
 
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectReader;
@@ -16,12 +17,18 @@ import com.otilm.core.extension.ExtensionType.Structure;
 import com.otilm.core.serialization.ObjectMapperFactory;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
@@ -30,6 +37,7 @@ import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.DERBitString;
 import org.bouncycastle.asn1.DERGeneralizedTime;
 import org.bouncycastle.asn1.DERIA5String;
@@ -75,45 +83,44 @@ public final class JerCodec {
     private JerCodec() {
     }
 
-    /** Parses a value's text. One place reads it, so a caller cannot judge a different value than it encodes. */
-    public static JsonNode parse(String json) {
-        try {
-            JsonNode value = STRICT_READER.readTree(json);
-            if (value == null) {
-                throw new ValidationException("Extension value is not well-formed JSON");
-            }
-            return value;
-        } catch (java.io.IOException e) {
-            throw new ValidationException("Extension value is not well-formed JSON");
-        }
-    }
+    /** The characters a written value can begin with that base64 never contains. */
+    private static final Pattern GENERALIZED_TIME = Pattern.compile("\\d{14}Z");
+    private static final DateTimeFormatter STRICT_TIME = DateTimeFormatter
+            .ofPattern("uuuuMMddHHmmss'Z'")
+            .withResolverStyle(ResolverStyle.STRICT);
 
-    public static byte[] encodeFromString(String json, ExtensionType type) {
-        return encode(parse(json), type);
-    }
+    private static final String WRITTEN_STARTS = "{[\"-";
 
     /**
      * The value as JSON when it was written out, or empty when it was handed over as base64 DER.
      *
      * <p>
-     * The two grammars overlap in exactly one place: a string of digits is a JSON number and may also be base64. Almost
-     * always it is base64 of nothing - the second byte would be a DER length longer than the blob - but a long enough
-     * run can decode to a complete DER value under a private-class tag. So the rule is DER-first where both readings
-     * exist: a number that is also complete DER when read as base64 is bytes, the form that predates this feature.
-     * Everything else that parses as JSON is written; base64 of any length otherwise contains characters JSON cannot
-     * follow a digit with, and never parses.
+     * A value beginning with a brace, a bracket, a quote or a minus was written - base64 has none of them - and if it
+     * then fails to parse, that is a fault to report rather than a reason to read it as bytes. The two grammars overlap
+     * in exactly one place: a string of digits is a JSON number and may also be base64. Almost always it is base64 of
+     * nothing - the second byte would be a DER length longer than the blob - but a long enough run can decode to a
+     * complete DER value under a private-class tag. So the rule is DER-first where both readings exist: a number that
+     * is also complete DER when read as base64 is bytes. Everything else that parses as JSON is written; base64 of any
+     * length otherwise contains characters JSON cannot follow a digit with, and never parses.
+     *
+     * @throws ValidationException when the value begins as written JSON but is not well-formed
      */
     public static Optional<JsonNode> tryParse(String value) {
         if (value == null || value.isBlank()) {
             return Optional.empty();
         }
+        String text = value.strip();
+        boolean written = WRITTEN_STARTS.indexOf(text.charAt(0)) >= 0;
         JsonNode parsed;
         try {
-            parsed = STRICT_READER.readTree(value);
-        } catch (IOException e) {
+            parsed = STRICT_READER.readTree(text);
+        } catch (JsonProcessingException e) {
+            if (written) {
+                throw new ValidationException("Extension value is not well-formed JSON: " + e.getOriginalMessage());
+            }
             return Optional.empty();
         }
-        if (parsed == null || parsed.isNumber() && isCompleteDer(value.strip())) {
+        if (parsed == null || !written && parsed.isNumber() && isCompleteDer(text)) {
             return Optional.empty();
         }
         return Optional.of(parsed);
@@ -126,11 +133,6 @@ public final class JerCodec {
         } catch (IllegalArgumentException | IOException e) {
             return false;
         }
-    }
-
-    /** Whether a value was written out in JSON rather than handed over as base64 DER. */
-    public static boolean looksWritten(String value) {
-        return tryParse(value).isPresent();
     }
 
     public static byte[] encode(JsonNode value, ExtensionType type) {
@@ -160,8 +162,20 @@ public final class JerCodec {
     }
 
     /** A member's tag is applied here rather than by the member's own type, which knows nothing about it. */
-    private static ASN1Encodable tagged(ASN1Encodable encoded, Member member) {
-        return member.tag() == null ? encoded : new DERTaggedObject(member.explicit(), member.tag(), encoded);
+    /**
+     * An implicit tag replaces the value's own, and for an undescribed value nothing records what that was. A SEQUENCE
+     * is the one shape that can be read back regardless, so anything else is refused rather than written as bytes that
+     * decode to a different value.
+     */
+    private static ASN1Encodable tagged(ASN1Encodable encoded, Member member, String path) {
+        if (member.tag() == null) {
+            return encoded;
+        }
+        if (!member.explicit() && member.type() instanceof Opaque opaque && !(encoded instanceof ASN1Sequence)) {
+            throw refusal(path, ("must be a SEQUENCE: an implicit tag replaces the type of anything else, and %s "
+                    + "does not say what it was").formatted(opaque.asn1Name()));
+        }
+        return new DERTaggedObject(member.explicit(), member.tag(), encoded);
     }
 
     private static ASN1Encodable structure(JsonNode value, Structure type, String path) {
@@ -181,7 +195,8 @@ public final class JerCodec {
             } else if (!isDefault(written, member)) {
                 // A member written as its DEFAULT is left out, as DER requires; accepting it and omitting it is
                 // kinder than refusing, since the author said what they meant.
-                members.add(tagged(encodable(written, member.type(), path + "." + member.name()), member));
+                String memberPath = path + "." + member.name();
+                members.add(tagged(encodable(written, member.type(), memberPath), member, memberPath));
             }
         }
         requireComponentAlternatives(value, type, path);
@@ -246,10 +261,10 @@ public final class JerCodec {
         if (literal instanceof Boolean flag) {
             return written.isBoolean() && written.booleanValue() == flag;
         }
-        if (literal instanceof Number number && written.isIntegralNumber()) {
-            return written.bigIntegerValue().equals(normalise(number));
+        if (literal instanceof Number number) {
+            return written.isIntegralNumber() && written.bigIntegerValue().equals(normalise(number));
         }
-        return Objects.equals(literal.toString(), written.asText());
+        return written.isTextual() && literal.toString().equals(written.textValue());
     }
 
     private static Object normalise(Object literal) {
@@ -303,7 +318,8 @@ public final class JerCodec {
         for (Member alternative : type.alternatives()) {
             if (alternative.name().equals(name)) {
                 String alternativePath = path + "." + name;
-                return tagged(encodable(value.get(name), alternative.type(), alternativePath), alternative);
+                return tagged(encodable(value.get(name), alternative.type(), alternativePath), alternative,
+                        alternativePath);
             }
         }
         throw refusal(path + "." + name, "is not an alternative of this choice");
@@ -311,6 +327,9 @@ public final class JerCodec {
 
     private static ASN1Encodable opaque(JsonNode value, Opaque type, String path) {
         byte[] der = hex(value, path);
+        if (der.length == 0) {
+            throw refusal(path, "carries no DER; %s cannot be empty".formatted(type.asn1Name()));
+        }
         try {
             return ASN1Primitive.fromByteArray(der);
         } catch (IOException e) {
@@ -322,15 +341,46 @@ public final class JerCodec {
         return switch (type.primitive()) {
             case BOOLEAN -> ASN1Boolean.getInstance(bool(value, path));
             case INTEGER -> new ASN1Integer(integer(value, type.valueRanges(), path));
-            case OID -> new ASN1ObjectIdentifier(text(value, type, path));
+            case OID -> checked(value, type, path, "an OBJECT IDENTIFIER", ASN1ObjectIdentifier::new);
             case UTF8_STRING -> new DERUTF8String(text(value, type, path));
-            case IA5_STRING -> new DERIA5String(text(value, type, path), true);
-            case PRINTABLE_STRING -> new DERPrintableString(text(value, type, path), true);
-            case GENERALIZED_TIME -> new DERGeneralizedTime(text(value, type, path));
+            case IA5_STRING -> checked(value, type, path, "an IA5String", written -> new DERIA5String(written, true));
+            case PRINTABLE_STRING ->
+                checked(value, type, path, "a PrintableString", written -> new DERPrintableString(written, true));
+            case GENERALIZED_TIME -> generalizedTime(value, type, path);
             case OCTET_STRING -> octetString(value, type, path);
             case BIT_STRING -> bitString(value, type, path);
             case NULL -> derNull(value, path);
         };
+    }
+
+    /**
+     * BouncyCastle refuses text outside a type's alphabet with a message naming its internals; this names the member.
+     */
+    private static ASN1Encodable checked(JsonNode value, Scalar type, String path, String asn1Type,
+            Function<String, ASN1Encodable> constructor) {
+        String written = text(value, type, path);
+        try {
+            return constructor.apply(written);
+        } catch (IllegalArgumentException e) {
+            throw refusal(path, "is not " + asn1Type);
+        }
+    }
+
+    /**
+     * DER allows only UTC time with no fraction (X.690 11.7), and RFC 5280 4.1.2.5.2 fixes the form to
+     * {@code YYYYMMDDHHMMSSZ}; anything else would go into the certificate as written.
+     */
+    private static ASN1Encodable generalizedTime(JsonNode value, Scalar type, String path) {
+        String written = text(value, type, path);
+        if (!GENERALIZED_TIME.matcher(written).matches()) {
+            throw refusal(path, "must be a GeneralizedTime of the form YYYYMMDDHHMMSSZ");
+        }
+        try {
+            LocalDateTime.parse(written, STRICT_TIME);
+        } catch (DateTimeParseException e) {
+            throw refusal(path, "is not a calendar date and time");
+        }
+        return new DERGeneralizedTime(written);
     }
 
     private static ASN1Encodable octetString(JsonNode value, Scalar type, String path) {

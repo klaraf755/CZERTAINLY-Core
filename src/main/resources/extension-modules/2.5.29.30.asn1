@@ -2,8 +2,8 @@
 -- reads: minimum MUST be zero and maximum MUST be absent, so GeneralSubtree declares neither.
 -- An iPAddress here carries an address and a mask, hence twice the usual size.
 -- Conforming CAs MUST NOT issue an empty Name Constraints, so at least one subtree list is required.
--- The types PKIX imports are not reproduced; each is tagged explicitly so its tagging does not
--- depend on a definition this module does not carry.
+-- Name is written out as RFC 5280 A.1 has it. ORAddress and EDIPartyName are not reproduced; each
+-- is a SEQUENCE, which is the one shape their implicit tags let a value be held to.
 NameConstraintsModule DEFINITIONS IMPLICIT TAGS ::= BEGIN
 
 NameConstraints ::= SEQUENCE {
@@ -30,6 +30,17 @@ GeneralName ::= CHOICE {
 
 OtherName ::= SEQUENCE {
      type-id                         OBJECT IDENTIFIER,
-     value                   [0] EXPLICIT ANY }
+     value                   [0] EXPLICIT ANY DEFINED BY type-id }
+
+Name ::= CHOICE {
+     rdnSequence                     RDNSequence }
+
+RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+
+RelativeDistinguishedName ::= SET SIZE (1..MAX) OF AttributeTypeAndValue
+
+AttributeTypeAndValue ::= SEQUENCE {
+     type                            OBJECT IDENTIFIER,
+     value                           ANY DEFINED BY type }
 
 END

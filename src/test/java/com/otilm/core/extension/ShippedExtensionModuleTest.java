@@ -8,6 +8,7 @@ import com.otilm.core.util.StructuredExtensionCodec;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,6 +28,12 @@ class ShippedExtensionModuleTest {
 
     private static String der(String oid, String json) throws Exception {
         return HexFormat.of().formatHex(JerCodec.encode(MAPPER.readTree(json), type(oid))).toUpperCase();
+    }
+
+    /** Encodes, asserts the bytes, and reads them back to exactly what was written. */
+    private static void roundTrips(String oid, String json, String hex) throws Exception {
+        assertThat(der(oid, json)).isEqualTo(hex);
+        assertThat(JerDecoder.decode(HexFormat.of().parseHex(hex), type(oid))).isEqualTo(MAPPER.readTree(json));
     }
 
     @Test
@@ -143,5 +150,62 @@ class ShippedExtensionModuleTest {
                 "{\"permittedSubtrees\":[{\"base\":{\"dNSName\":\"a.example\"},\"minimum\":1}]}"))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("minimum");
+    }
+
+    @Nested
+    class NameConstraintsAlternatives {
+
+        // Vectors from asn1tools against the same module text, except where noted.
+
+        @Test
+        void otherNameWrapsItsValueExplicitly() throws Exception {
+            roundTrips("2.5.29.30",
+                    "{\"permittedSubtrees\":[{\"base\":{\"otherName\":{\"type-id\":\"1.2.3\",\"value\":\"0C0474657374\"}}}]}",
+                    "3012A010300EA00C06022A03A0060C0474657374");
+        }
+
+        @Test
+        void directoryNameIsANameNotBytes() throws Exception {
+            roundTrips("2.5.29.30",
+                    "{\"permittedSubtrees\":[{\"base\":{\"directoryName\":{\"rdnSequence\":[[{\"type\":\"2.5.4.3\",\"value\":\"0C0474657374\"}]]}}}]}",
+                    "3017A0153013A411300F310D300B06035504030C0474657374");
+            assertThatThrownBy(
+                    () -> der("2.5.29.30", "{\"permittedSubtrees\":[{\"base\":{\"directoryName\":\"020101\"}}]}"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("directoryName");
+        }
+
+        @Test
+        void aRelativeDistinguishedNameIsSortedAsDerRequires() throws Exception {
+            // X.690 11.6 orders SET OF elements by their encodings; asn1tools leaves them as written, so this
+            // vector is the sorted form (2.5.4.3 before 2.5.4.10) rather than its output.
+            String written = "{\"permittedSubtrees\":[{\"base\":{\"directoryName\":{\"rdnSequence\":[["
+                    + "{\"type\":\"2.5.4.10\",\"value\":\"0C0474657374\"},"
+                    + "{\"type\":\"2.5.4.3\",\"value\":\"0C0474657374\"}]]}}}]}";
+            assertThat(der("2.5.29.30", written))
+                    .isEqualTo("3024A0223020A41E301C311A300B06035504030C0474657374300B060355040A0C0474657374");
+        }
+
+        @Test
+        void x400AddressAndEdiPartyNameMustBeSequences() throws Exception {
+            roundTrips("2.5.29.30", "{\"permittedSubtrees\":[{\"base\":{\"x400Address\":\"3008300661041302435A\"}}]}",
+                    "300EA00C300AA308300661041302435A");
+            roundTrips("2.5.29.30", "{\"permittedSubtrees\":[{\"base\":{\"ediPartyName\":\"3006810461636D65\"}}]}",
+                    "300CA00A3008A506810461636D65");
+            for (String alternative : List.of("x400Address", "ediPartyName")) {
+                assertThatThrownBy(() -> der("2.5.29.30",
+                        "{\"permittedSubtrees\":[{\"base\":{\"" + alternative + "\":\"020101\"}}]}"))
+                        .as(alternative)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining(alternative)
+                        .hasMessageContaining("must be a SEQUENCE");
+            }
+        }
+
+        @Test
+        void registeredIdIsAnOid() throws Exception {
+            roundTrips("2.5.29.30", "{\"excludedSubtrees\":[{\"base\":{\"registeredID\":\"1.3.6.1.4.1.99999\"}}]}",
+                    "300EA10C300A88082B06010401868D1F");
+        }
     }
 }
