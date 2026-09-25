@@ -514,6 +514,10 @@ public final class Asn1ModuleReader {
         do {
             BigInteger low = bound(take());
             BigInteger high = accept("..") ? bound(take()) : low;
+            if (size && low != null && low.signum() < 0) {
+                throw new ValidationException(
+                        "The extension's ASN.1 module writes SIZE (%s); a size cannot be negative".formatted(low));
+            }
             if (high != null && low != null && low.compareTo(high) > 0) {
                 throw new ValidationException(
                         "The extension's ASN.1 module writes the range %s..%s backwards".formatted(low, high));
@@ -791,17 +795,21 @@ public final class Asn1ModuleReader {
 
     /** A DEFAULT is compared to written values, so a literal of another type would match nothing or the wrong thing. */
     private static void requireDefaultOfItsType(Node member, ExtensionType type) {
-        boolean fits = type instanceof Scalar(var primitive, var ranges, var sizes) && switch (primitive) {
-            case BOOLEAN -> member.defaultValue instanceof Boolean;
-            case INTEGER -> member.defaultValue instanceof BigInteger value
-                    && (ranges.isEmpty() || ranges.stream().anyMatch(range -> range.admits(value)));
-            default -> false;
-        };
-        if (!fits) {
+        if (!literalFits(member.defaultValue, type)) {
             throw new ValidationException(("The extension's ASN.1 module gives '%s' a DEFAULT of %s, which is not a "
                     + "value of its type; only BOOLEAN and INTEGER defaults within the member's range are supported")
                     .formatted(member.name, member.defaultValue));
         }
+    }
+
+    /** Whether a literal the module wrote - TRUE, FALSE or a number - is a value of the type it is compared with. */
+    private static boolean literalFits(Object literal, ExtensionType type) {
+        return type instanceof Scalar(var primitive, var ranges, var sizes) && switch (primitive) {
+            case BOOLEAN -> literal instanceof Boolean;
+            case INTEGER -> literal instanceof BigInteger value
+                    && (ranges.isEmpty() || ranges.stream().anyMatch(range -> range.admits(value)));
+            default -> false;
+        };
     }
 
     /**
@@ -849,14 +857,20 @@ public final class Asn1ModuleReader {
 
     /** A component constraint naming a member the structure does not have would hold or fail for no reason. */
     private static void requireKnownComponents(List<List<ComponentRule>> alternatives, List<Member> members) {
-        Set<String> names = new HashSet<>();
-        members.forEach(member -> names.add(member.name()));
+        Map<String, Member> byName = new LinkedHashMap<>();
+        members.forEach(member -> byName.put(member.name(), member));
         for (List<ComponentRule> alternative : alternatives) {
             for (ComponentRule rule : alternative) {
-                if (!names.contains(rule.member())) {
+                Member member = byName.get(rule.member());
+                if (member == null) {
                     throw new ValidationException(
                             "The extension's ASN.1 module constrains component '%s', which the type does not declare"
                                     .formatted(rule.member()));
+                }
+                if (rule.presence() == Presence.EQUALS && !literalFits(rule.value(), member.type())) {
+                    throw new ValidationException(("The extension's ASN.1 module requires '%s' to be %s, which is not "
+                            + "a value of its type, so no value could satisfy it")
+                            .formatted(rule.member(), rule.value()));
                 }
             }
         }

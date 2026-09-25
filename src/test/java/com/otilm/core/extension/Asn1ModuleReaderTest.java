@@ -665,6 +665,26 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aComponentLiteralOfAnotherType() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { enabled BOOLEAN } (WITH COMPONENTS { ..., enabled (7) })"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'enabled' to be 7");
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { tier INTEGER (1..3) } (WITH COMPONENTS { ..., tier (9) })"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'tier' to be 9");
+        }
+
+        @Test
+        void aNegativeSize() {
+            assertThatThrownBy(() -> read("P ::= OCTET STRING (SIZE (-1))"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("cannot be negative");
+            assertThatThrownBy(() -> read("P ::= SEQUENCE SIZE (-2..4) OF INTEGER"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("cannot be negative");
+        }
+
+        @Test
         void aConstraintOnAnUndefinedReferenceIsRefused() {
             assertThatThrownBy(() -> read("P ::= SEQUENCE { a [0] EXPLICIT Foo (SIZE (1)) }"))
                     .isInstanceOf(ValidationException.class)
