@@ -311,9 +311,8 @@ public class CmpServiceImpl implements CmpExternalService {
                     buildProcessingErrorResponse(configuration, pkiRequest, e.toPKIBody()));
         } catch (IOException e) {
             return errorResponse(tid, logPrefix, requestAsString, "parsing", e,
-                    PkiMessageError
-                            .unprotectedMessage(pkiRequest.getHeader(), PKIFailureInfo.badDataFormat,
-                                    ImplFailureInfo.CMPSRV101));
+                    buildProcessingErrorResponse(configuration, pkiRequest,
+                            PkiMessageError.generateBody(PKIFailureInfo.badDataFormat, ImplFailureInfo.CMPSRV101)));
         } catch (Exception e) {
             return errorResponse(tid, logPrefix, requestAsString, "handling", e,
                     buildProcessingErrorResponse(configuration, pkiRequest, safeErrorBody(e)));

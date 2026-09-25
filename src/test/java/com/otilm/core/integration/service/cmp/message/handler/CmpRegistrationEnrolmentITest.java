@@ -418,7 +418,10 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
         ResponseEntity<byte[]> response = post(
                 irMessage(SUBJECT_DN, List.of("device-1.example"), CHALLENGE, registration.getUuid()));
 
-        assertEquals(PKIBody.TYPE_INIT_REP, PKIMessage.getInstance(response.getBody()).getBody().getType());
+        PKIMessage ip = PKIMessage.getInstance(response.getBody());
+        assertEquals(PKIBody.TYPE_INIT_REP, ip.getBody().getType());
+        PKIStatusInfo certStatus = ((CertRepMessage) ip.getBody().getContent()).getResponse()[0].getStatus();
+        assertEquals(PKIStatus.WAITING, certStatus.getStatus().intValue(), "accepted as pending, not rejected");
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             Certificate completed = certificateRepository.findByUuid(registration.getUuid()).orElseThrow();
             assertNotNull(completed.getProtocolAssociation(), "the completion is attributed to CMP");
