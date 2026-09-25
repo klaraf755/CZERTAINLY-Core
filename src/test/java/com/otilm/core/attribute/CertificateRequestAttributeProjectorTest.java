@@ -111,9 +111,10 @@ class CertificateRequestAttributeProjectorTest {
     void refusesAWrittenValueForAnExtensionWithoutAModule() {
         var uuid = UUID.randomUUID();
         var def = dataAttribute(uuid, extensionMapping("1.3.6.1.4.1.99999.8"));
+        var definitions = List.of(def);
         var values = List.of(stringValue(uuid, "{\"a\":1}"));
 
-        assertThatThrownBy(() -> CertificateRequestAttributeProjector.project(List.of(def), values))
+        assertThatThrownBy(() -> CertificateRequestAttributeProjector.project(definitions, values))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("1.3.6.1.4.1.99999.8")
                 .hasMessageContaining("no registered ASN.1 module");

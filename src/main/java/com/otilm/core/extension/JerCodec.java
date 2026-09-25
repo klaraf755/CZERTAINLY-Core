@@ -84,9 +84,9 @@ public final class JerCodec {
     }
 
     /** The characters a written value can begin with that base64 never contains. */
-    private static final Pattern GENERALIZED_TIME = Pattern.compile("\\d{14}Z");
+    private static final Pattern GENERALIZED_TIME = Pattern.compile("\\d{14}(\\.\\d*[1-9])?Z");
     private static final DateTimeFormatter STRICT_TIME = DateTimeFormatter
-            .ofPattern("uuuuMMddHHmmss'Z'")
+            .ofPattern("uuuuMMddHHmmss")
             .withResolverStyle(ResolverStyle.STRICT);
 
     private static final String WRITTEN_STARTS = "{[\"-";
@@ -161,19 +161,19 @@ public final class JerCodec {
         };
     }
 
-    /** A member's tag is applied here rather than by the member's own type, which knows nothing about it. */
     /**
-     * An implicit tag replaces the value's own, and for an undescribed value nothing records what that was. A SEQUENCE
-     * is the one shape that can be read back regardless, so anything else is refused rather than written as bytes that
-     * decode to a different value.
+     * A member's tag is applied here rather than by the member's own type, which knows nothing about it. An implicit
+     * tag replaces the value's own, and for an undescribed value nothing records what that was. A SEQUENCE is the one
+     * shape that can be read back regardless, so anything else is refused rather than written as bytes that decode to a
+     * different value.
      */
     private static ASN1Encodable tagged(ASN1Encodable encoded, Member member, String path) {
         if (member.tag() == null) {
             return encoded;
         }
-        if (!member.explicit() && member.type() instanceof Opaque opaque && !(encoded instanceof ASN1Sequence)) {
+        if (!member.explicit() && member.type() instanceof Opaque(var asn1Name) && !(encoded instanceof ASN1Sequence)) {
             throw refusal(path, ("must be a SEQUENCE: an implicit tag replaces the type of anything else, and %s "
-                    + "does not say what it was").formatted(opaque.asn1Name()));
+                    + "does not say what it was").formatted(asn1Name));
         }
         return new DERTaggedObject(member.explicit(), member.tag(), encoded);
     }
@@ -367,16 +367,17 @@ public final class JerCodec {
     }
 
     /**
-     * DER allows only UTC time with no fraction (X.690 11.7), and RFC 5280 4.1.2.5.2 fixes the form to
-     * {@code YYYYMMDDHHMMSSZ}; anything else would go into the certificate as written.
+     * X.690 11.7 fixes the DER form of a GeneralizedTime: UTC with a Z, seconds always present, and a fraction only
+     * when it is not zero, with no trailing zeros. Anything else would go into the certificate as written.
      */
     private static ASN1Encodable generalizedTime(JsonNode value, Scalar type, String path) {
         String written = text(value, type, path);
         if (!GENERALIZED_TIME.matcher(written).matches()) {
-            throw refusal(path, "must be a GeneralizedTime of the form YYYYMMDDHHMMSSZ");
+            throw refusal(path, "must be a GeneralizedTime in DER form, YYYYMMDDHHMMSS[.fraction]Z with no trailing "
+                    + "zeros in the fraction");
         }
         try {
-            LocalDateTime.parse(written, STRICT_TIME);
+            LocalDateTime.parse(written.substring(0, 14), STRICT_TIME);
         } catch (DateTimeParseException e) {
             throw refusal(path, "is not a calendar date and time");
         }
@@ -410,19 +411,19 @@ public final class JerCodec {
             }
             return new DERBitString(octets, octets.length * 8 - fixed.getAsInt());
         }
-        if (!value.isObject() || !value.has(VALUE)) {
+        if (!value.isObject()) {
             throw refusal(path, "must carry a hexadecimal value and a length in bits");
         }
         rejectUnknownMembers(value, path, VALUE, LENGTH);
-        byte[] octets = hex(value.get(VALUE), path + "." + VALUE);
-        int bits = octets.length * 8;
-        if (value.has(LENGTH)) {
-            JsonNode length = value.get(LENGTH);
-            if (!length.isIntegralNumber() || !length.canConvertToInt()) {
-                throw refusal(path + "." + LENGTH, "must be a whole number of bits");
-            }
-            bits = length.intValue();
+        if (!value.has(VALUE) || !value.has(LENGTH)) {
+            throw refusal(path, "must carry a hexadecimal value and a length in bits");
         }
+        byte[] octets = hex(value.get(VALUE), path + "." + VALUE);
+        JsonNode length = value.get(LENGTH);
+        if (!length.isIntegralNumber() || !length.canConvertToInt()) {
+            throw refusal(path + "." + LENGTH, "must be a whole number of bits");
+        }
+        int bits = length.intValue();
         if (bits < 0 || bits > octets.length * 8 || bits <= (octets.length - 1) * 8) {
             throw refusal(path + "." + LENGTH, "does not match the %d octets written".formatted(octets.length));
         }

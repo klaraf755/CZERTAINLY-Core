@@ -339,6 +339,18 @@ class JerCodecTest {
         }
 
         @Test
+        void theObjectFormRequiresBothMembers() {
+            Structure variable = new Structure(List.of(new Member("ku", of(Primitive.BIT_STRING))));
+            for (String value : List.of("{\"ku\":{\"value\":\"80\"}}", "{\"ku\":{\"length\":1}}")) {
+                assertThatThrownBy(() -> der(value, variable))
+                        .as(value)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("$.ku")
+                        .hasMessageContaining("a length in bits");
+            }
+        }
+
+        @Test
         void aVariableSizeBitStringRefusesTheBareForm() {
             Structure variable = new Structure(List.of(new Member("ku", of(Primitive.BIT_STRING))));
             assertThatThrownBy(() -> der("{\"ku\":\"80\"}", variable))
@@ -370,7 +382,8 @@ class JerCodecTest {
 
         @Test
         void anOidThatIsNotOne() {
-            assertThatThrownBy(() -> der("{\"o\":\"1.2.x\"}", of("o", Primitive.OID)))
+            Structure oid = of("o", Primitive.OID);
+            assertThatThrownBy(() -> der("{\"o\":\"1.2.x\"}", oid))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("$.o")
                     .hasMessageContaining("OBJECT IDENTIFIER");
@@ -378,11 +391,13 @@ class JerCodecTest {
 
         @Test
         void textOutsideAStringTypesAlphabet() {
-            assertThatThrownBy(() -> der("{\"s\":\"a@b\"}", of("s", Primitive.PRINTABLE_STRING)))
+            Structure printable = of("s", Primitive.PRINTABLE_STRING);
+            Structure ia5 = of("s", Primitive.IA5_STRING);
+            assertThatThrownBy(() -> der("{\"s\":\"a@b\"}", printable))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("$.s")
                     .hasMessageContaining("PrintableString");
-            assertThatThrownBy(() -> der("{\"s\":\"caf\u00e9\"}", of("s", Primitive.IA5_STRING)))
+            assertThatThrownBy(() -> der("{\"s\":\"caf\u00e9\"}", ia5))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("$.s")
                     .hasMessageContaining("IA5String");
@@ -392,12 +407,16 @@ class JerCodecTest {
         void aGeneralizedTimeNotInDerForm() throws Exception {
             Structure time = of("t", Primitive.GENERALIZED_TIME);
             assertThat(der("{\"t\":\"20260101000000Z\"}", time)).isEqualTo("3011180F32303236303130313030303030305A");
-            for (String value : List.of("2026-01-01", "20260101000000+0100", "20260101000000", "20260101000000.5Z")) {
+            // X.690 11.7 keeps a fraction that is not zero and forbids trailing zeros in it.
+            assertThat(der("{\"t\":\"20260101000000.5Z\"}", time)).startsWith("30131811");
+            for (String value : List
+                    .of("2026-01-01", "20260101000000+0100", "20260101000000", "20260101000000.0Z",
+                            "20260101000000.50Z", "20260101000000.Z")) {
                 assertThatThrownBy(() -> der("{\"t\":\"" + value + "\"}", time))
                         .as(value)
                         .isInstanceOf(ValidationException.class)
                         .hasMessageContaining("$.t")
-                        .hasMessageContaining("YYYYMMDDHHMMSSZ");
+                        .hasMessageContaining("DER form");
             }
             assertThatThrownBy(() -> der("{\"t\":\"20261301000000Z\"}", time))
                     .isInstanceOf(ValidationException.class)

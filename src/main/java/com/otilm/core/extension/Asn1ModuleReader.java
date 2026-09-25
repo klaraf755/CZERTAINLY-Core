@@ -543,9 +543,12 @@ public final class Asn1ModuleReader {
     private ExtensionType resolve(Node node, Node memberContext, Deque<String> inProgress) {
         return switch (node.kind) {
             case REFERENCE -> resolveReference(node, memberContext, inProgress);
-            case SCALAR -> new Scalar(node.primitive, node.valueRanges, node.sizes);
+            case SCALAR -> scalar(node.primitive, node.valueRanges, node.sizes, describe(node));
             case OPAQUE -> new Opaque(node.reference);
-            case REPEATED -> new Repeated(resolve(node.element, null, inProgress), node.set, node.sizes);
+            case REPEATED -> {
+                refuseIf(!node.valueRanges.isEmpty(), describe(node), "a value range");
+                yield new Repeated(resolve(node.element, null, inProgress), node.set, node.sizes);
+            }
             case CHOICE -> {
                 List<Member> alternatives = memberList(node, inProgress);
                 requireDistinctAlternatives(alternatives);
@@ -609,8 +612,8 @@ public final class Asn1ModuleReader {
         return switch (resolved) {
             case Scalar(var primitive, var definedRanges, var definedSizes) -> {
                 refuseIf(components, name, "WITH COMPONENTS");
-                yield new Scalar(primitive, intersect(definedRanges, reference.valueRanges, name),
-                        intersect(definedSizes, reference.sizes, name));
+                yield scalar(primitive, intersect(definedRanges, reference.valueRanges, name),
+                        intersect(definedSizes, reference.sizes, name), "'" + name + "'");
             }
             case Repeated(var element, var set, var definedSizes) -> {
                 refuseIf(ranges || components, name, "a value range or WITH COMPONENTS");
@@ -630,6 +633,27 @@ public final class Asn1ModuleReader {
             case Choice ignored -> throw constraintRefusal(name, "a constraint; constrain its alternatives instead");
             case Opaque ignored -> throw constraintRefusal(name, "a constraint; it is not defined here");
         };
+    }
+
+    /**
+     * A value range belongs to INTEGER and SIZE to the string types; on anything else the encoder would never consult
+     * it, and a module registered with one would promise a rule that no value is held to.
+     */
+    private static Scalar scalar(Primitive primitive, List<Range> ranges, List<Range> sizes, String name) {
+        boolean sized = switch (primitive) {
+            case UTF8_STRING, IA5_STRING, PRINTABLE_STRING, OCTET_STRING, BIT_STRING -> true;
+            default -> false;
+        };
+        refuseIf(!ranges.isEmpty() && primitive != Primitive.INTEGER, name, "a value range");
+        refuseIf(!sizes.isEmpty() && !sized, name, "SIZE");
+        return new Scalar(primitive, ranges, sizes);
+    }
+
+    private static String describe(Node node) {
+        if (node.name != null) {
+            return "'" + node.name + "'";
+        }
+        return node.kind == Kind.SCALAR ? node.primitive.name() : "a SEQUENCE OF";
     }
 
     private static void refuseIf(boolean condition, String name, String what) {
@@ -722,12 +746,13 @@ public final class Asn1ModuleReader {
     private static void requireDefaultOfItsType(Node member, ExtensionType type) {
         boolean fits = type instanceof Scalar(var primitive, var ranges, var sizes) && switch (primitive) {
             case BOOLEAN -> member.defaultValue instanceof Boolean;
-            case INTEGER -> member.defaultValue instanceof BigInteger;
+            case INTEGER -> member.defaultValue instanceof BigInteger value
+                    && (ranges.isEmpty() || ranges.stream().anyMatch(range -> range.admits(value)));
             default -> false;
         };
         if (!fits) {
             throw new ValidationException(("The extension's ASN.1 module gives '%s' a DEFAULT of %s, which is not a "
-                    + "value of its type; only BOOLEAN and INTEGER defaults are supported")
+                    + "value of its type; only BOOLEAN and INTEGER defaults within the member's range are supported")
                     .formatted(member.name, member.defaultValue));
         }
     }

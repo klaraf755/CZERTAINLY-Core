@@ -569,6 +569,27 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aConstraintTheTypeCannotCarry() {
+            for (String module : List
+                    .of("P ::= INTEGER (SIZE (1))", "P ::= SEQUENCE { a BOOLEAN (1..2) }",
+                            "P ::= SEQUENCE (1..3) OF INTEGER", "P ::= UTF8String (1..3)",
+                            "P ::= Count (SIZE (1))\nCount ::= INTEGER")) {
+                assertThatThrownBy(() -> read(module))
+                        .as(module)
+                        .isInstanceOf(ValidationException.class)
+                        .hasMessageContaining("cannot carry");
+            }
+        }
+
+        @Test
+        void aDefaultOutsideTheMembersRange() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { tier INTEGER (1..3) DEFAULT 5 }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("DEFAULT of 5");
+            assertThat(read("P ::= SEQUENCE { tier INTEGER (1..3) DEFAULT 2 }")).isNotNull();
+        }
+
+        @Test
         void aDefaultOfAnotherType() {
             assertThatThrownBy(() -> read("P ::= SEQUENCE { a BOOLEAN DEFAULT 7 }"))
                     .isInstanceOf(ValidationException.class)
