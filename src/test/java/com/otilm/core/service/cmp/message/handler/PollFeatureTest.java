@@ -45,7 +45,7 @@ class PollFeatureTest {
     private PollFeature pollFeature;
 
     @BeforeEach
-    void setUp() throws Exception {
+    void setUp() {
         certificateService = mock(CertificateInternalService.class);
         EntityManager entityManager = mock(EntityManager.class);
         pollFeature = new PollFeature();
