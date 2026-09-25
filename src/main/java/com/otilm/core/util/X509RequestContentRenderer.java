@@ -9,6 +9,7 @@ import com.otilm.api.model.core.certificate.GeneralNameType;
 import com.otilm.api.model.core.oid.ExtensionValueEncoding;
 import com.otilm.api.model.core.oid.OidCategory;
 import com.otilm.core.extension.ExtensionValues;
+import com.otilm.core.extension.JerCodec;
 import com.otilm.core.oid.OidHandler;
 import com.otilm.core.oid.OidRecord;
 import java.io.IOException;
@@ -199,9 +200,9 @@ public final class X509RequestContentRenderer {
     }
 
     /**
-     * A DER extension's value is either written out or handed over as bytes. Base64 cannot begin with any of the
-     * characters a written value starts with, so the two are told apart without ambiguity; the registry decides only
-     * whether writing one is possible at all, which needs the extension's ASN.1 type.
+     * A DER extension's value is either written out or handed over as bytes; {@link JerCodec#tryParse} tells them
+     * apart, DER-first where a run of digits reads as both. The registry decides only whether writing one is possible
+     * at all, which needs the extension's ASN.1 type.
      */
     private static byte[] derValue(String oid, String value) throws IOException {
         Optional<byte[]> written;

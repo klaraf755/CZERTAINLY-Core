@@ -571,7 +571,8 @@ public final class Asn1ModuleReader {
     }
 
     /**
-     * A reference the module does not define cannot be built, so it becomes opaque - except when it is tagged. X.680
+     * A reference the module does not define cannot be built, so it becomes opaque - except when it is tagged. A
+     * reference to a type still being resolved is recursion, which the model does not represent and is refused. X.680
      * 31.2.7 makes a tag on an untagged CHOICE explicit even in an IMPLICIT module, so whether the tag wraps or
      * replaces depends on a type that is not here. Guessing would emit different bytes without saying so, which is
      * worse than refusing.
@@ -584,8 +585,15 @@ public final class Asn1ModuleReader {
                     + "its tagging cannot be determined; define it in the module, or tag it EXPLICIT or IMPLICIT")
                     .formatted(node.reference));
         }
-        if (target == null || inProgress.contains(node.reference)) {
-            return new Opaque(node.reference);
+        if (target == null) {
+            // Still constrained, so a SIZE or range on a type the module does not define is refused, not dropped.
+            return constrain(new Opaque(node.reference), node);
+        }
+        if (inProgress.contains(node.reference)) {
+            // The resolved model is a finite tree; cutting the recursion to bytes would make the inner values take
+            // hex where the module promises members, without saying so.
+            throw new ValidationException(("The extension's ASN.1 module defines '%s' in terms of itself, which "
+                    + "this platform does not support").formatted(node.reference));
         }
         inProgress.push(node.reference);
         try {
@@ -727,8 +735,8 @@ public final class Asn1ModuleReader {
 
     /**
      * X.680 31.2.7: a tag on an untagged CHOICE or open type is explicit even in an IMPLICIT module, because such a
-     * type has no tag of its own for an implicit one to replace. Followed through references, so that a CHOICE cut
-     * short by recursion is still seen for what it is.
+     * type has no tag of its own for an implicit one to replace. Followed through references, since a member's type is
+     * often a name.
      */
     private boolean choiceOrOpenType(Node node, Set<String> seen) {
         return switch (node.kind) {

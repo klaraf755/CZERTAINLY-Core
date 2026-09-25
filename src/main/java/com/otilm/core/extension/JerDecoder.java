@@ -49,6 +49,11 @@ import org.bouncycastle.asn1.BERTags;
  * <p>
  * A DEFAULT that was omitted comes back as its default value, because a reader wants the extension's effective content
  * rather than a transcript of which octets were present.
+ *
+ * <p>
+ * The type guides the shape only. Ranges, sizes and WITH COMPONENTS are rules for values the platform issues, and a
+ * certificate that exists may have been issued under other rules; reading it back must show what it carries, not refuse
+ * to.
  */
 public final class JerDecoder {
 

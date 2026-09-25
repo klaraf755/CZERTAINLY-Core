@@ -613,13 +613,29 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
-        void aTagOnAChoiceCutShortByRecursionIsStillExplicit() throws Exception {
+        void aTagOnAReferenceToAChoiceIsExplicit() throws Exception {
             ExtensionType tree = read("""
                     Tree ::= SEQUENCE { child [0] Node OPTIONAL }
-                    Node ::= CHOICE { leaf [1] INTEGER, sub [2] SEQUENCE { child [0] Node OPTIONAL } }""");
-            // The inner child resolves to an opaque Node while Node is being resolved; its [0] must still wrap.
-            assertThat(encode("{\"child\":{\"sub\":{\"child\":\"810105\"}}}", tree))
-                    .isEqualTo("3009A007A205A003810105");
+                    Node ::= CHOICE { leaf [1] INTEGER, sub [2] SEQUENCE { count INTEGER } }""");
+            assertThat(encode("{\"child\":{\"leaf\":5}}", tree)).isEqualTo("3005A003810105");
+        }
+
+        @Test
+        void aRecursiveTypeIsRefusedByName() {
+            // Cutting the recursion to bytes would make the inner values take hex where the module promises members.
+            assertThatThrownBy(() -> read("""
+                    Tree ::= SEQUENCE { child [0] Node OPTIONAL }
+                    Node ::= CHOICE { leaf [1] INTEGER, sub [2] SEQUENCE { child [0] Node OPTIONAL } }"""))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'Node' in terms of itself");
+        }
+
+        @Test
+        void aConstraintOnAnUndefinedReferenceIsRefused() {
+            assertThatThrownBy(() -> read("P ::= SEQUENCE { a [0] EXPLICIT Foo (SIZE (1)) }"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("'Foo'")
+                    .hasMessageContaining("not defined here");
         }
 
         @Test
