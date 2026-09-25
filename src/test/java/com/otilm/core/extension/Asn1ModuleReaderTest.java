@@ -647,7 +647,7 @@ class Asn1ModuleReaderTest {
             // Thirty aliases each adding (0..MAX | 0..MAX) would be 2^30 overlaps if unions were kept as written.
             StringBuilder module = new StringBuilder("P ::= A0 (0..MAX | 0..MAX)\n");
             for (int i = 0; i < 30; i++) {
-                module.append("A%d ::= A%d (0..MAX | 0..MAX)\n".formatted(i, i + 1));
+                module.append("A%d ::= A%d (0..MAX | 0..MAX)".formatted(i, i + 1)).append('\n');
             }
             module.append("A30 ::= INTEGER\n");
             assertThat(((Scalar) read(module.toString())).valueRanges()).hasSize(1);

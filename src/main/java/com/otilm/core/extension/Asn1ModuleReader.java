@@ -14,6 +14,7 @@ import com.otilm.core.extension.ExtensionType.Structure;
 import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -720,10 +721,8 @@ public final class Asn1ModuleReader {
      */
     private static List<Range> disjoint(List<Range> ranges) {
         List<Range> sorted = new ArrayList<>(ranges);
-        sorted
-                .sort((a, b) -> a.min() == null
-                        ? (b.min() == null ? 0 : -1)
-                        : b.min() == null ? 1 : a.min().compareTo(b.min()));
+        // An absent lower bound is MIN, so it sorts first.
+        sorted.sort(Comparator.comparing(Range::min, Comparator.nullsFirst(Comparator.naturalOrder())));
         List<Range> out = new ArrayList<>();
         for (Range next : sorted) {
             Range last = out.isEmpty() ? null : out.getLast();
