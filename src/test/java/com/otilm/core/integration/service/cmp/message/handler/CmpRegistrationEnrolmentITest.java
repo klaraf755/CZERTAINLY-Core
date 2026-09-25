@@ -38,6 +38,7 @@ import com.otilm.core.dao.repository.FunctionGroupRepository;
 import com.otilm.core.dao.repository.RaProfileRepository;
 import com.otilm.core.dao.repository.cmp.CmpProfileRepository;
 import com.otilm.core.dao.repository.cmp.CmpTransactionRepository;
+import com.otilm.core.service.CertificateInternalService;
 import com.otilm.core.service.cmp.CmpEntityUtil;
 import com.otilm.core.service.cmp.CmpExternalService;
 import com.otilm.core.service.cmp.CmpTestUtil;
@@ -76,11 +77,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -141,8 +140,7 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     @Autowired
     private PollFeature pollFeature;
     @Autowired
-    @Qualifier("pollFeature")
-    private PollFeature realPollFeature;
+    private CertificateInternalService certificateService;
     @Autowired
     private PlatformTransactionManager transactionManager;
     @PersistenceContext
@@ -406,22 +404,21 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     void matchingEnrolmentAnswersOverTheProtocolWhenThePollReadsTheDatabase() throws Exception {
         Certificate registration = seedRegistration(SUBJECT_DN, Map.of("dNSName", List.of("device-1.example")),
                 CertificateState.REGISTERED);
-        // The real poll re-reads the certificate inside the request transaction. Nothing issues it here, so the
-        // budget is shortened and the enrolment is expected to be accepted as pending, over the protocol.
+        // A real poll re-reads the certificate inside the request transaction. Nothing issues it here, so the
+        // budget is short and the enrolment is expected to be accepted as pending, over the protocol.
+        PollFeature realPoll = new PollFeature();
+        realPoll.setCertificateService(certificateService);
+        realPoll.setEntityManager(entityManager);
+        realPoll.setPollFeatureTimeout(1);
         given(pollFeature.pollCertificate(any(), any(), any(), any()))
-                .willAnswer(invocation -> realPollFeature
+                .willAnswer(invocation -> realPoll
                         .pollCertificate(invocation.getArgument(0), invocation.getArgument(1),
                                 invocation.getArgument(2), invocation.getArgument(3)));
-        Object budget = ReflectionTestUtils.getField(realPollFeature, "pollFeatureTimeout");
-        ReflectionTestUtils.setField(realPollFeature, "pollFeatureTimeout", 1);
-        try {
-            ResponseEntity<byte[]> response = post(
-                    irMessage(SUBJECT_DN, List.of("device-1.example"), CHALLENGE, registration.getUuid()));
 
-            assertEquals(PKIBody.TYPE_INIT_REP, PKIMessage.getInstance(response.getBody()).getBody().getType());
-        } finally {
-            ReflectionTestUtils.setField(realPollFeature, "pollFeatureTimeout", budget);
-        }
+        ResponseEntity<byte[]> response = post(
+                irMessage(SUBJECT_DN, List.of("device-1.example"), CHALLENGE, registration.getUuid()));
+
+        assertEquals(PKIBody.TYPE_INIT_REP, PKIMessage.getInstance(response.getBody()).getBody().getType());
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             Certificate completed = certificateRepository.findByUuid(registration.getUuid()).orElseThrow();
             assertNotNull(completed.getProtocolAssociation(), "the completion is attributed to CMP");
