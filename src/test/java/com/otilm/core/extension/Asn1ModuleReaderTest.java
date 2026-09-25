@@ -685,6 +685,19 @@ class Asn1ModuleReaderTest {
         }
 
         @Test
+        void aCommentEndsAtTheNextDelimiterOrTheLine() throws Exception {
+            // X.680 12.6.3; the range after a closed comment is part of the type, the rest of an open one is not.
+            for (String module : List
+                    .of("P ::= INTEGER -- note -- (1..3)", "P ::= INTEGER -- a -- (1..3) -- tail (5..9)",
+                            "P ::= INTEGER -- note\n  (1..3)")) {
+                ExtensionType type = read(module);
+                assertThat(encode("2", type)).as(module).isEqualTo("020102");
+                assertThatThrownBy(() -> encode("4", type)).as(module).isInstanceOf(ValidationException.class);
+            }
+            assertThat(encode("4", read("P ::= INTEGER -- (1..3)"))).isEqualTo("020104");
+        }
+
+        @Test
         void aConstraintOnAnUndefinedReferenceIsRefused() {
             assertThatThrownBy(() -> read("P ::= SEQUENCE { a [0] EXPLICIT Foo (SIZE (1)) }"))
                     .isInstanceOf(ValidationException.class)

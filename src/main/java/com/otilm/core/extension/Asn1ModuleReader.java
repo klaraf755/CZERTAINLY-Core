@@ -122,8 +122,7 @@ public final class Asn1ModuleReader {
     private void tokenise(String module) {
         StringBuilder word = new StringBuilder();
         for (String line : module.split("\n")) {
-            int comment = line.indexOf("--");
-            String text = comment < 0 ? line : line.substring(0, comment);
+            String text = withoutComments(line);
             int i = 0;
             while (i < text.length()) {
                 char ch = text.charAt(i);
@@ -141,6 +140,29 @@ public final class Asn1ModuleReader {
             }
             flush(word);
         }
+    }
+
+    /**
+     * X.680 12.6.3: a comment runs from {@code --} to the next {@code --} on the line, or to its end. Stopping at the
+     * first delimiter would drop {@code (1..3)} from {@code INTEGER -- note -- (1..3)} without a word.
+     */
+    private static String withoutComments(String line) {
+        StringBuilder out = new StringBuilder();
+        int i = 0;
+        while (i < line.length()) {
+            int start = line.indexOf("--", i);
+            if (start < 0) {
+                out.append(line, i, line.length());
+                break;
+            }
+            out.append(line, i, start).append(' ');
+            int end = line.indexOf("--", start + 2);
+            if (end < 0) {
+                break;
+            }
+            i = end + 2;
+        }
+        return out.toString();
     }
 
     /**
