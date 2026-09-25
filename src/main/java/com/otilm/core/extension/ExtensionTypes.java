@@ -21,14 +21,18 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ExtensionTypes {
 
     private static final Map<String, Optional<String>> SHIPPED = new ConcurrentHashMap<>();
-    private static final Map<String, ExtensionType> PARSED = new ConcurrentHashMap<>();
+    private static final Map<String, Parsed> PARSED = new ConcurrentHashMap<>();
+
+    /** A parsed module with the text it came from, so an edit to the OID replaces it rather than sitting beside it. */
+    private record Parsed(String module, ExtensionType type) {
+    }
 
     private ExtensionTypes() {
     }
 
     /** The type governing {@code oid}'s value, or empty when neither the registry nor Core describes it. */
     public static Optional<ExtensionType> resolve(String oid) {
-        return module(oid).map(ExtensionTypes::parse);
+        return module(oid).map(module -> parse(oid, module));
     }
 
     /**
@@ -71,11 +75,17 @@ public final class ExtensionTypes {
     }
 
     /**
-     * Parses a module, reusing the result for text already seen. Registration rejects a module this cannot read, so
-     * reaching here with one means a row written straight into the database - and then the failure belongs to whoever
-     * asks for it rather than to every later request.
+     * Parses a module, keeping one result per OID and replacing it when the OID's text changes, so the cache holds no
+     * more than the registry does. Registration rejects a module this cannot read, so reaching here with one means a
+     * row written straight into the database - and then the failure belongs to whoever asks for it rather than to every
+     * later request.
      */
-    private static ExtensionType parse(String module) {
-        return PARSED.computeIfAbsent(module, Asn1ModuleReader::read);
+    private static ExtensionType parse(String oid, String module) {
+        Parsed cached = PARSED.get(oid);
+        if (cached == null || !cached.module().equals(module)) {
+            cached = new Parsed(module, Asn1ModuleReader.read(module));
+            PARSED.put(oid, cached);
+        }
+        return cached.type();
     }
 }
