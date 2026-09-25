@@ -50,6 +50,7 @@ public final class Asn1ModuleReader {
 
     /** Deep enough for any extension anyone has written; a module that needs more is not one to register. */
     private static final int MAX_NESTING = 32;
+    private static final int MAX_RANGES = 64;
     /** Inlining references can multiply a small module into a very large type; this caps what one may become. */
     private static final int MAX_RESOLVED_MEMBERS = 10_000;
 
@@ -513,16 +514,25 @@ public final class Asn1ModuleReader {
         do {
             BigInteger low = bound(take());
             BigInteger high = accept("..") ? bound(take()) : low;
+            if (high != null && low != null && low.compareTo(high) > 0) {
+                throw new ValidationException(
+                        "The extension's ASN.1 module writes the range %s..%s backwards".formatted(low, high));
+            }
             ranges.add(new Range(low, high));
+            if (ranges.size() > MAX_RANGES) {
+                throw new ValidationException(
+                        "The extension's ASN.1 module unites more than %d ranges in one constraint"
+                                .formatted(MAX_RANGES));
+            }
         } while (accept("|"));
         require(")");
         if (!bare && size) {
             require(")");
         }
         if (size) {
-            node.sizes = List.copyOf(ranges);
+            node.sizes = disjoint(ranges);
         } else {
-            node.valueRanges = List.copyOf(ranges);
+            node.valueRanges = disjoint(ranges);
         }
     }
 
@@ -675,7 +685,11 @@ public final class Asn1ModuleReader {
                 "The extension's ASN.1 module applies %s to '%s', which that type cannot carry".formatted(what, name));
     }
 
-    /** Both constraints must hold, so the admitted values are those in some range of each: the pairwise overlaps. */
+    /**
+     * Both constraints must hold, so the admitted values are those in some range of each: the pairwise overlaps. Both
+     * sides are disjoint unions, so the result has fewer ranges than the two together, and a chain of constrained
+     * references cannot grow it.
+     */
     private static List<Range> intersect(List<Range> definition, List<Range> reference, String name) {
         if (definition.isEmpty()) {
             return reference;
@@ -692,6 +706,31 @@ public final class Asn1ModuleReader {
         if (out.isEmpty()) {
             throw new ValidationException(
                     "The extension's ASN.1 module constrains '%s' to a range that admits no value".formatted(name));
+        }
+        return disjoint(out);
+    }
+
+    /**
+     * The same set of values as the fewest ranges: sorted, with overlapping and adjacent ones merged. A union written
+     * as {@code (0..MAX | 0..MAX)} is one range, so repeating it through references costs nothing.
+     */
+    private static List<Range> disjoint(List<Range> ranges) {
+        List<Range> sorted = new ArrayList<>(ranges);
+        sorted
+                .sort((a, b) -> a.min() == null
+                        ? (b.min() == null ? 0 : -1)
+                        : b.min() == null ? 1 : a.min().compareTo(b.min()));
+        List<Range> out = new ArrayList<>();
+        for (Range next : sorted) {
+            Range last = out.isEmpty() ? null : out.getLast();
+            boolean touches = last != null && (last.max() == null || next.min() == null
+                    || last.max().add(BigInteger.ONE).compareTo(next.min()) >= 0);
+            if (touches) {
+                BigInteger max = last.max() == null || next.max() == null ? null : last.max().max(next.max());
+                out.set(out.size() - 1, new Range(last.min(), max));
+            } else {
+                out.add(next);
+            }
         }
         return List.copyOf(out);
     }

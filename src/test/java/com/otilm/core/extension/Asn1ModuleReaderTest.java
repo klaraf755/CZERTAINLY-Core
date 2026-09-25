@@ -12,6 +12,8 @@ import com.otilm.core.extension.ExtensionType.Structure;
 import java.math.BigInteger;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -628,6 +630,38 @@ class Asn1ModuleReaderTest {
                     Node ::= CHOICE { leaf [1] INTEGER, sub [2] SEQUENCE { child [0] Node OPTIONAL } }"""))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("'Node' in terms of itself");
+        }
+
+        @Test
+        void aUnionOfRangesIsKeptDisjoint() throws Exception {
+            // (1..3 | 2..5 | 7) is 1..5 and 7; the encoder sees two ranges, not three.
+            ExtensionType type = read("P ::= INTEGER (1..3 | 2..5 | 7)");
+            assertThat(encode("4", type)).isEqualTo("020104");
+            assertThat(encode("7", type)).isEqualTo("020107");
+            assertThatThrownBy(() -> encode("6", type)).isInstanceOf(ValidationException.class);
+            assertThat(((Scalar) type).valueRanges()).hasSize(2);
+        }
+
+        @Test
+        void aChainOfConstrainedReferencesDoesNotMultiplyRanges() {
+            // Thirty aliases each adding (0..MAX | 0..MAX) would be 2^30 overlaps if unions were kept as written.
+            StringBuilder module = new StringBuilder("P ::= A0 (0..MAX | 0..MAX)\n");
+            for (int i = 0; i < 30; i++) {
+                module.append("A%d ::= A%d (0..MAX | 0..MAX)\n".formatted(i, i + 1));
+            }
+            module.append("A30 ::= INTEGER\n");
+            assertThat(((Scalar) read(module.toString())).valueRanges()).hasSize(1);
+        }
+
+        @Test
+        void tooManyRangesInOneConstraintAreRefused() {
+            String union = IntStream
+                    .range(0, 65)
+                    .mapToObj(i -> String.valueOf(i * 2))
+                    .collect(Collectors.joining(" | "));
+            assertThatThrownBy(() -> read("P ::= INTEGER (" + union + ")"))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("more than 64 ranges");
         }
 
         @Test

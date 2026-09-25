@@ -190,4 +190,16 @@ class JerDecoderTest {
 
         assertThat(decode("300403020780", variable)).hasToString("{\"ku\":{\"value\":\"80\",\"length\":1}}");
     }
+
+    @Test
+    void aTagOfAnotherClassIsNotTheMembersTag() {
+        // [1] in a module is context-specific; APPLICATION 1 (41) and PRIVATE 1 (C1) are other types altogether.
+        Structure tagged = new Structure(
+                List.of(new Member("a", new Scalar(Primitive.INTEGER), 1, false, false, null)));
+
+        assertThat(decode("3003810105", tagged)).hasToString("{\"a\":5}");
+        for (String other : List.of("3003410105", "3003C10105")) {
+            assertThatThrownBy(() -> decode(other, tagged)).as(other).isInstanceOf(ValidationException.class);
+        }
+    }
 }

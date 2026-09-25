@@ -147,7 +147,8 @@ public final class JerDecoder {
     private static boolean fits(ASN1Encodable component, Member member) {
         ASN1Primitive primitive = component.toASN1Primitive();
         if (member.tag() != null) {
-            return primitive instanceof ASN1TaggedObject tagged && tagged.getTagNo() == member.tag();
+            // The module's tags are context-specific; an APPLICATION or PRIVATE tag of the same number is another type.
+            return primitive instanceof ASN1TaggedObject tagged && tagged.hasContextTag(member.tag());
         }
         return matchesType(primitive, member.type());
     }
