@@ -1,6 +1,7 @@
 package com.otilm.core.integration.service.cmp.message.handler;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.otilm.api.interfaces.core.cmp.error.CmpProcessingException;
 import com.otilm.api.model.client.connector.v2.ConnectorVersion;
 import com.otilm.api.model.core.certificate.CertificateEventStatus;
 import com.otilm.api.model.core.certificate.CertificateRelationType;
@@ -48,6 +49,8 @@ import com.otilm.core.util.BaseSpringBootTest;
 import com.otilm.core.util.CertificateUtil;
 import com.otilm.core.util.MetaDefinitions;
 import com.otilm.core.util.mockbeans.PollMocks;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -57,11 +60,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.cmp.CertRepMessage;
 import org.bouncycastle.asn1.cmp.ErrorMsgContent;
 import org.bouncycastle.asn1.cmp.PKIBody;
 import org.bouncycastle.asn1.cmp.PKIFailureInfo;
 import org.bouncycastle.asn1.cmp.PKIMessage;
+import org.bouncycastle.asn1.cmp.PKIStatus;
+import org.bouncycastle.asn1.cmp.PKIStatusInfo;
 import org.bouncycastle.asn1.cmp.PollReqContent;
+import org.bouncycastle.cert.cmp.GeneralPKIMessage;
+import org.bouncycastle.cert.cmp.ProtectedPKIMessage;
+import org.bouncycastle.cert.crmf.PKMACBuilder;
+import org.bouncycastle.cert.crmf.jcajce.JcePKMACValuesCalculator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,6 +82,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -134,6 +145,8 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
     private PollFeature realPollFeature;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private WireMockServer mockServer;
     private RaProfile raProfile;
@@ -436,8 +449,45 @@ class CmpRegistrationEnrolmentITest extends BaseSpringBootTest {
 
         ResponseEntity<byte[]> response = post(irMessage(SUBJECT_DN, null, CHALLENGE, registration.getUuid()));
 
-        PKIMessage error = PKIMessage.getInstance(response.getBody());
-        assertNotNull(error.getProtection(), "the matched challenge keys the error's MAC");
+        ProtectedPKIMessage error = new ProtectedPKIMessage(
+                new GeneralPKIMessage(PKIMessage.getInstance(response.getBody())));
+        assertTrue(error.verify(new PKMACBuilder(new JcePKMACValuesCalculator()), CHALLENGE.toCharArray()),
+                "the matched challenge keys the error's MAC");
+    }
+
+    @Test
+    void aDomainRejectionAfterACollaboratorDoomedTheTransactionIsStillAnsweredAsACmpError() throws Exception {
+        Certificate registration = seedRegistration(SUBJECT_DN, null, CertificateState.REGISTERED);
+        // Stands in for a collaborator under rollbackFor = Exception failing with a checked exception that the
+        // handler then converts into a domain rejection.
+        given(pollFeature.pollCertificate(any(), any(), any(), any())).willAnswer(invocation -> {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            throw new CmpProcessingException(invocation.getArgument(0), PKIFailureInfo.systemFailure,
+                    "collaborator failed");
+        });
+
+        ResponseEntity<byte[]> response = post(irMessage(SUBJECT_DN, null, CHALLENGE, registration.getUuid()));
+
+        // A CRMF rejection is answered as an ip whose single CertResponse carries the failure.
+        PKIMessage rejection = PKIMessage.getInstance(response.getBody());
+        assertEquals(PKIBody.TYPE_INIT_REP, rejection.getBody().getType());
+        PKIStatusInfo status = ((CertRepMessage) rejection.getBody().getContent()).getResponse()[0].getStatus();
+        assertEquals(PKIStatus.REJECTION, status.getStatus().intValue());
+        assertEquals(PKIFailureInfo.systemFailure, status.getFailInfo().intValue());
+        assertTrue(status.getStatusString().getStringAtUTF8(0).getString().contains("collaborator failed"));
+    }
+
+    @Test
+    void aHandlerFailureThatAbortedTheDatabaseTransactionIsStillAnsweredAsACmpError() throws Exception {
+        Certificate registration = seedRegistration(SUBJECT_DN, null, CertificateState.REGISTERED);
+        // A statement the database rejects aborts the request transaction; every later statement in it fails too.
+        given(pollFeature.pollCertificate(any(), any(), any(), any()))
+                .willAnswer(invocation -> entityManager.createNativeQuery("select 1/0").getSingleResult());
+
+        ResponseEntity<byte[]> response = post(irMessage(SUBJECT_DN, null, CHALLENGE, registration.getUuid()));
+
+        assertEquals(PKIFailureInfo.systemFailure, failInfo(response.getBody()));
+        assertEquals("CMP request handling failed", failText(response.getBody()));
     }
 
     @Test

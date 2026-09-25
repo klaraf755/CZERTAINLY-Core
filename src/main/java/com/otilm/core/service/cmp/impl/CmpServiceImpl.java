@@ -315,38 +315,27 @@ public class CmpServiceImpl implements CmpExternalService {
                             .unprotectedMessage(pkiRequest.getHeader(), PKIFailureInfo.badDataFormat,
                                     ImplFailureInfo.CMPSRV101));
         } catch (Exception e) {
-            ownDoomedTransaction();
             return errorResponse(tid, logPrefix, requestAsString, "handling", e,
                     buildProcessingErrorResponse(configuration, pkiRequest, safeErrorBody(e)));
         }
     }
 
     /**
-     * A runtime failure that crossed a nested transactional collaborator (a message handler) has already marked the
-     * request transaction rollback-only. Left at that, the commit at the boundary throws and the CMP error built here
-     * is replaced by the generic JSON error. Marking the rollback locally makes the boundary roll back quietly and
-     * return the protocol response. A transaction nothing has doomed still commits, keeping the failed-transaction
-     * state the error path records.
-     */
-    private static void ownDoomedTransaction() {
-        try {
-            TransactionStatus status = TransactionAspectSupport.currentTransactionStatus();
-            if (status.isRollbackOnly()) {
-                status.setRollbackOnly();
-            }
-        } catch (NoTransactionException e) {
-            LOG.debug("No active transaction for the failed CMP request");
-        }
-    }
-
-    /**
-     * Fails a transaction, logs the given processing phase, and returns the CMP error response to the client. The
-     * {@code pkiResponse} is built by the caller because each phase shapes it differently (protected vs. unprotected,
-     * domain body vs. generic body).
+     * Records the failure on the CMP transaction, logs the given processing phase, and returns the CMP error response
+     * to the client. The {@code pkiResponse} is built by the caller because each phase shapes it differently (protected
+     * vs. unprotected, domain body vs. generic body).
+     *
+     * <p>
+     * A request transaction a collaborator has already doomed is left without the failure record: the write would only
+     * be discarded with the rollback, and it fails outright when the database has aborted the transaction, which would
+     * replace this response with the generic JSON error.
+     * </p>
      */
     private ResponseEntity<byte[]> errorResponse(ASN1OctetString tid, String logPrefix, String requestAsString,
             String phase, Exception e, PKIMessage pkiResponse) {
-        handleTrxError(tid, e);
+        if (!ownDoomedTransaction()) {
+            handleTrxError(tid, e);
+        }
         if (LOG.isErrorEnabled()) {
             if (verbose) {
                 LOG
@@ -408,6 +397,29 @@ public class CmpServiceImpl implements CmpExternalService {
                 updatedTransaction.setCustomReason(customReason.substring(0, Math.min(254, customReason.length())));
                 cmpTransactionService.save(updatedTransaction);
             }
+        }
+    }
+
+    /**
+     * A failure that crossed a nested transactional collaborator (a message handler, or a service running under
+     * {@code rollbackFor = Exception.class}) has already marked the request transaction rollback-only. Left at that,
+     * the commit at the boundary throws and the CMP error built here is replaced by the generic JSON error. Marking the
+     * rollback locally makes the boundary roll back quietly and return the protocol response. A transaction nothing has
+     * doomed still commits.
+     *
+     * @return whether the request transaction is rolling back
+     */
+    private static boolean ownDoomedTransaction() {
+        try {
+            TransactionStatus status = TransactionAspectSupport.currentTransactionStatus();
+            if (!status.isRollbackOnly()) {
+                return false;
+            }
+            status.setRollbackOnly();
+            return true;
+        } catch (NoTransactionException e) {
+            LOG.debug("No active transaction for the failed CMP request");
+            return false;
         }
     }
 
