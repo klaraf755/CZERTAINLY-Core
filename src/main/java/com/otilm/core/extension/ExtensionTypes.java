@@ -6,6 +6,8 @@ import com.otilm.core.oid.OidRecord;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,7 +23,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ExtensionTypes {
 
     private static final Map<String, Optional<String>> SHIPPED = new ConcurrentHashMap<>();
-    private static final Map<String, Parsed> PARSED = new ConcurrentHashMap<>();
+    private static final int MAX_PARSED = 256;
+    /** Least recently used out first; an OID deleted or stripped of its module is dropped on the next resolve too. */
+    private static final Map<String, Parsed> PARSED = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Parsed> eldest) {
+            return size() > MAX_PARSED;
+        }
+    });
 
     /** A parsed module with the text it came from, so an edit to the OID replaces it rather than sitting beside it. */
     private record Parsed(String module, ExtensionType type) {
@@ -32,7 +41,11 @@ public final class ExtensionTypes {
 
     /** The type governing {@code oid}'s value, or empty when neither the registry nor Core describes it. */
     public static Optional<ExtensionType> resolve(String oid) {
-        return module(oid).map(module -> parse(oid, module));
+        Optional<String> module = module(oid);
+        if (module.isEmpty()) {
+            PARSED.remove(oid);
+        }
+        return module.map(text -> parse(oid, text));
     }
 
     /**
@@ -75,10 +88,10 @@ public final class ExtensionTypes {
     }
 
     /**
-     * Parses a module, keeping one result per OID and replacing it when the OID's text changes, so the cache holds no
-     * more than the registry does. Registration rejects a module this cannot read, so reaching here with one means a
-     * row written straight into the database - and then the failure belongs to whoever asks for it rather than to every
-     * later request.
+     * Parses a module, keeping one result per OID, replacing it when the OID's text changes, and letting the least
+     * recently used go once the registry outgrows the bound. Registration rejects a module this cannot read, so
+     * reaching here with one means a row written straight into the database - and then the failure belongs to whoever
+     * asks for it rather than to every later request.
      */
     private static ExtensionType parse(String oid, String module) {
         Parsed cached = PARSED.get(oid);
