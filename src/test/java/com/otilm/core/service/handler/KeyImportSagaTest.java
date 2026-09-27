@@ -92,8 +92,8 @@ class KeyImportSagaTest {
     @BeforeEach
     void setUp() throws Exception {
         saga = new KeyImportSaga(keyImportRepository, cryptographicKeyRepository, cryptographicKeyWriter,
-                keyImportWriter, eventHistory, adapterFactory,
-                new KeyImportProperties(Duration.ofMillis(300), Duration.ofMillis(10), Duration.ofHours(20)));
+                keyImportWriter, eventHistory, adapterFactory, new KeyImportProperties(Duration.ofMillis(300),
+                        Duration.ofMillis(10), Duration.ofHours(20), null, null));
         TokenProfileFullModel profile = mock(TokenProfileFullModel.class);
         TokenInstanceFullModel token = mock(TokenInstanceFullModel.class);
         when(profile.tokenInstance()).thenReturn(token);
@@ -107,7 +107,7 @@ class KeyImportSagaTest {
                 new NameAndUuidDto(UUID.randomUUID().toString(), "requester"));
         metadata = new KeyImportMetadata("imported key", null, Set.of(), List.of());
         attempt = new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.REQUESTED, null,
-                OffsetDateTime.now(), SENT);
+                OffsetDateTime.now(), SENT, null);
         when(cryptographicKeyRepository.findByName(anyString())).thenReturn(Optional.empty());
         when(cryptographicKeyWriter.adoptablePublicKey("fingerprint")).thenReturn(Optional.empty());
         when(keyImportRepository.findFirstByIdempotencyKeyAndStateInOrderByCreatedAtDesc(eq(RETRY), any()))
@@ -265,7 +265,7 @@ class KeyImportSagaTest {
         // given
         KeyImportSaga impatient = new KeyImportSaga(keyImportRepository, cryptographicKeyRepository,
                 cryptographicKeyWriter, keyImportWriter, eventHistory, adapterFactory,
-                new KeyImportProperties(Duration.ofMillis(100), Duration.ofHours(1), Duration.ofHours(20)));
+                new KeyImportProperties(Duration.ofMillis(100), Duration.ofHours(1), Duration.ofHours(20), null, null));
         when(adapter.importKey(terms, attempt, key, "imported key")).thenReturn(new ImportAnswer.Running(HANDLE));
         when(adapter.importKeyStatus(terms.profile(), HANDLE, SENT, "imported key"))
                 .thenReturn(new ImportAnswer.Running(HANDLE));
@@ -333,7 +333,7 @@ class KeyImportSagaTest {
         when(adapter.importKeyResult(terms.profile(), attempt.uuid(), SENT, "imported key"))
                 .thenReturn(new ImportAnswer.NotAccepted());
         KeyImportAttempt resent = new KeyImportAttempt(attempt.uuid(), attempt.keyReference(), KeyImportState.REQUESTED,
-                null, attempt.createdAt(), keyDigests);
+                null, attempt.createdAt(), keyDigests, null);
         when(keyImportWriter.resending(attempt.uuid(), keyDigests)).thenReturn(Optional.of(resent));
         when(adapter.importKey(terms, resent, key, "imported key")).thenReturn(imported(key.subjectPublicKeyInfo()));
 
@@ -367,7 +367,7 @@ class KeyImportSagaTest {
     void importKey_startsAfreshWhenTheOpenAttemptImportedNothing() throws Exception {
         // given
         KeyImportAttempt stale = new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.ACCEPTED,
-                HANDLE, OffsetDateTime.now(), SENT);
+                HANDLE, OffsetDateTime.now(), SENT, null);
         openAttempt(stale);
         when(adapter.importKeyResult(terms.profile(), stale.uuid(), SENT, "imported key"))
                 .thenReturn(new ImportAnswer.NotImported());
@@ -385,7 +385,7 @@ class KeyImportSagaTest {
     void importKey_waitsOnAnOpenAttemptByItsStoredHandle() throws Exception {
         // given
         KeyImportAttempt accepted = new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.ACCEPTED,
-                HANDLE, OffsetDateTime.now(), SENT);
+                HANDLE, OffsetDateTime.now(), SENT, null);
         openAttempt(accepted);
         when(adapter.importKeyResult(terms.profile(), accepted.uuid(), SENT, "imported key"))
                 .thenReturn(new ImportAnswer.Running(null));
@@ -433,8 +433,24 @@ class KeyImportSagaTest {
         verify(adapter, never()).importKey(any(), any(), any(), any());
     }
 
+    /** A request at the attempt again owns it for another retry window, whether it sends it again or not. */
     @Test
-    void importKey_leavesAnImportOfAnotherKeyOpen() throws Exception {
+    void importKey_takesTheAttemptItResumesForTheRetryWindow() throws Exception {
+        // given
+        openAttempt(attempt);
+        when(adapter.importKeyResult(terms.profile(), attempt.uuid(), SENT, "imported key"))
+                .thenReturn(imported(key.subjectPublicKeyInfo()));
+
+        // when
+        saga.importKey(terms, RETRY, key, metadata);
+
+        // then
+        verify(keyImportWriter).resuming(attempt.uuid());
+    }
+
+    /** The key in the token is not the key in the file, so the reconciliation is to destroy it at once. */
+    @Test
+    void importKey_handsAnImportOfAnotherKeyToTheReconciliation() throws Exception {
         // given
         when(adapter.importKey(terms, attempt, key, "imported key")).thenReturn(imported(new byte[]{9, 9, 9}));
 
@@ -444,6 +460,7 @@ class KeyImportSagaTest {
                 .isInstanceOf(ConnectorServerException.class)
                 .hasMessage(KeyImportSaga.UNCONFIRMED);
         verify(keyImportWriter, never()).complete(any(), any());
+        verify(keyImportWriter).dueNow(attempt.uuid());
     }
 
     /** The public key proves the key, and the items must describe it too: an item of another algorithm is refused. */
@@ -481,7 +498,7 @@ class KeyImportSagaTest {
     }
 
     @Test
-    void importKey_refusesAKeyRegisteredMeanwhileAndLeavesTheAttemptOpen() throws Exception {
+    void importKey_handsALostRaceToTheReconciliation() throws Exception {
         // given
         when(adapter.importKey(terms, attempt, key, "imported key")).thenReturn(imported(key.subjectPublicKeyInfo()));
         when(keyImportWriter.complete(eq(attempt.uuid()), any()))
@@ -494,6 +511,23 @@ class KeyImportSagaTest {
                 .hasMessageContaining(CryptographicKeyWriter.KEY_ALREADY_HELD)
                 .hasMessageNotContaining("duplicate fingerprint");
         verify(keyImportWriter, never()).fail(any(), any());
+        verify(keyImportWriter).dueNow(attempt.uuid());
+    }
+
+    /** A retry would be refused the same way, so the key the connector holds is left to the reconciliation. */
+    @Test
+    void importKey_handsAKeyThePlatformRefusesToRegisterToTheReconciliation() throws Exception {
+        // given
+        when(adapter.importKey(terms, attempt, key, "imported key")).thenReturn(imported(key.subjectPublicKeyInfo()));
+        when(keyImportWriter.complete(eq(attempt.uuid()), any()))
+                .thenThrow(new ValidationException(ValidationError.create(CryptographicKeyWriter.KEY_NOT_ACTIVE)));
+
+        // when
+        // then
+        assertThatThrownBy(() -> saga.importKey(terms, RETRY, key, metadata))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining(CryptographicKeyWriter.KEY_NOT_ACTIVE);
+        verify(keyImportWriter).dueNow(attempt.uuid());
     }
 
     @Test
@@ -564,7 +598,7 @@ class KeyImportSagaTest {
     void importKey_doesNotSendAgainAnAttemptTheConnectorMayNoLongerRecord() throws Exception {
         // given
         KeyImportAttempt old = new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.REQUESTED,
-                null, OffsetDateTime.now().minusHours(21), SENT);
+                null, OffsetDateTime.now().minusHours(21), SENT, null);
         openAttempt(old);
         when(adapter.importKeyResult(terms.profile(), old.uuid(), SENT, "imported key"))
                 .thenReturn(new ImportAnswer.NotAccepted());

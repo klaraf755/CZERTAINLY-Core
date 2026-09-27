@@ -30,8 +30,10 @@ import com.otilm.api.model.connector.common.v2.OperationStatus;
 import com.otilm.api.model.connector.cryptography.enums.TokenInstanceStatus;
 import com.otilm.api.model.connector.cryptography.v2.OperationResponseValidator;
 import com.otilm.api.model.connector.cryptography.v2.OperationTrackingRequestV2Dto;
+import com.otilm.api.model.connector.cryptography.v2.key.DestroyKeyRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.ImportKeyRequestV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.ImportKeyResultRequestV2Dto;
+import com.otilm.api.model.connector.cryptography.v2.key.KeyOperationResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.KeyPairDataResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.KeyPairOperationStatusResponseV2Dto;
 import com.otilm.api.model.connector.cryptography.v2.key.PrivateKeyDataResponseV2Dto;
@@ -84,6 +86,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class KeyProviderV2AdapterImportTest {
@@ -278,8 +281,8 @@ class KeyProviderV2AdapterImportTest {
         });
         KeyImportTerms terms = terms(List.of(FeatureFlag.KEY_IMPORT), false);
         KeyImportAttempt resent = new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.REQUESTED,
-                null, OffsetDateTime.now(),
-                OutboundSecretContainment.digestsOf(Set.of("earlier-transport-passphrase")));
+                null, OffsetDateTime.now(), OutboundSecretContainment.digestsOf(Set.of("earlier-transport-passphrase")),
+                null);
         NormalizedKey key = normalizedKey();
 
         // when
@@ -531,6 +534,120 @@ class KeyProviderV2AdapterImportTest {
     }
 
     @Test
+    void destroyImportedKeyItem_destroysTheItemUnderItsHandle() throws Exception {
+        // given
+        when(client.destroyKey(eq(connector), any())).thenReturn(ResponseEntity.ok(new KeyOperationResponseV2Dto()));
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> handle = metadata("private-handle");
+
+        // when
+        adapter.destroyImportedKeyItem(profile, handle);
+
+        // then
+        ArgumentCaptor<DestroyKeyRequestV2Dto> sent = ArgumentCaptor.forClass(DestroyKeyRequestV2Dto.class);
+        verify(client).destroyKey(eq(connector), sent.capture());
+        assertThat(sent.getValue().getKeyMeta()).isEqualTo(handle);
+        assertThat(sent.getValue().getExecutionMode()).isEqualTo(OperationExecutionMode.SYNCHRONOUS);
+    }
+
+    /** Without its handle the connector cannot tell which key to destroy, so a "not found" would prove nothing. */
+    @Test
+    void destroyImportedKeyItem_refusesAnItemWithoutAHandle() {
+        // given
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> noHandle = List.of();
+
+        // when
+        // then
+        assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, noHandle))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(client);
+    }
+
+    /**
+     * A connector that knows no such key may have destroyed it, or may no longer reach the token that holds it, so a
+     * not-found answer, with a problem document or without one, neither destroys nor refuses.
+     */
+    @Test
+    void destroyImportedKeyItem_takesNoNotFoundAsDestroyed() throws Exception {
+        // given
+        when(client.destroyKey(eq(connector), any()))
+                .thenThrow(new ConnectorEntityNotFoundException("gone"))
+                .thenThrow(new ConnectorProblemException(ProblemDetailExtended
+                        .fromErrorCode(ErrorCode.RESOURCE_NOT_FOUND, "no such token", null, null)));
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> handle = metadata("private-handle");
+
+        // when
+        // then
+        assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, handle))
+                .isInstanceOf(ConnectorServerException.class)
+                .hasMessage("The connector failed to destroy the imported key.");
+        assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, handle))
+                .isInstanceOf(ConnectorServerException.class)
+                .hasMessage("The connector failed to destroy the imported key.");
+    }
+
+    /**
+     * A stored credential Core cannot resolve stops the destroy before the connector is asked, so nothing was refused.
+     */
+    @Test
+    void destroyImportedKeyItem_takesACredentialCoreCannotResolveAsAFailure() throws Exception {
+        // given
+        when(resolver.resolveForConnectorRequestAsSystem(any(), any()))
+                .thenThrow(new ValidationException("The credential is disabled."));
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> handle = metadata("private-handle");
+
+        // when
+        // then
+        assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, handle))
+                .isInstanceOf(ConnectorServerException.class)
+                .hasMessage("The connector failed to destroy the imported key.");
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void destroyImportedKeyItem_namesOnlyTheCodeOfARefusal() throws Exception {
+        // given
+        when(client.destroyKey(eq(connector), any()))
+                .thenThrow(new ConnectorProblemException(ProblemDetailExtended
+                        .fromErrorCode(ErrorCode.VALIDATION_FAILED, "refused for reasons of the connector", null,
+                                null)));
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> handle = metadata("private-handle");
+
+        // when
+        // then
+        assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, handle))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("The connector refused to destroy the imported key (VALIDATION_FAILED).");
+    }
+
+    /** A failure, an unreachable connector, or an answer that did not destroy the key now is no refusal. */
+    @Test
+    void destroyImportedKeyItem_reportsAnyOtherOutcomeInThePlatformsWords() throws Exception {
+        // given
+        KeyOperationResponseV2Dto accepted = new KeyOperationResponseV2Dto();
+        accepted.setOperationMeta(metadata("operation"));
+        when(client.destroyKey(eq(connector), any()))
+                .thenThrow(new ConnectorProblemException(ProblemDetailExtended
+                        .fromErrorCode(ErrorCode.INTERNAL_SERVER_ERROR, "failed in words of its own", null, null)))
+                .thenThrow(new ConnectorCommunicationException("down", null))
+                .thenReturn(ResponseEntity.accepted().body(accepted));
+        ImmutableTokenProfileFullModel profile = profile(List.of(FeatureFlag.KEY_IMPORT));
+        List<MetadataAttribute> handle = metadata("private-handle");
+
+        // when
+        // then
+        for (int answer = 0; answer < 3; answer++) {
+            assertThatThrownBy(() -> adapter.destroyImportedKeyItem(profile, handle))
+                    .isInstanceOf(ConnectorServerException.class)
+                    .hasMessage("The connector failed to destroy the imported key.");
+        }
+    }
+
+    @Test
     void cancelImportKey_isTrueOnlyWhenTheConnectorAbortedTheImport() throws Exception {
         // given
         when(client.cancelImportKey(eq(connector), any()))
@@ -580,7 +697,7 @@ class KeyProviderV2AdapterImportTest {
 
     private KeyImportAttempt attempt() {
         return new KeyImportAttempt(UUID.randomUUID(), UUID.randomUUID(), KeyImportState.REQUESTED, null,
-                OffsetDateTime.now(), sentSecretDigests());
+                OffsetDateTime.now(), sentSecretDigests(), null);
     }
 
     private NormalizedKey normalizedKey() {

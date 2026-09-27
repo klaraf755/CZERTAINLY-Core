@@ -16,12 +16,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Runs {@code V202609261200__key_import.sql} as Flyway will. The test bootstrap generates its schema from the entities,
- * which cannot express a partial index, so this is where the one-open-attempt rule is proven.
+ * Runs the key import migrations as Flyway will. The test bootstrap generates its schema from the entities, which
+ * cannot express a partial index or a backfill, so this is where the one-open-attempt rule and the reconciliation
+ * schedule are proven.
  */
 class KeyImportMigrationITest extends BaseSpringBootTest {
 
     private static final String MIGRATION_RESOURCE = "db/migration/V202609261200__key_import.sql";
+
+    private static final String RECONCILIATION_RESOURCE = "db/migration/V202609261800__key_import_reconciliation.sql";
 
     private static final String SCRATCH_SCHEMA = "key_import_migration_check";
 
@@ -55,6 +58,27 @@ class KeyImportMigrationITest extends BaseSpringBootTest {
         }
     }
 
+    /** Another import of a key the reconciliation is undoing would put a second copy in the token meanwhile. */
+    @Test
+    void aKeyBeingUndoneTakesNoOtherImport() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+                runMigration(connection, RECONCILIATION_RESOURCE);
+                insertAttempt(connection, "COMPENSATING");
+
+                // when
+                // then
+                assertThatThrownBy(() -> insertAttempt(connection, "REQUESTED"))
+                        .isInstanceOf(SQLException.class)
+                        .hasMessageContaining("uq_key_import_open_attempt");
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
     @Test
     void settledImportsLeaveRoomForAnother() throws Exception {
         try (Connection connection = dataSource.getConnection()) {
@@ -79,12 +103,155 @@ class KeyImportMigrationITest extends BaseSpringBootTest {
         }
     }
 
+    /** An import open when the reconciliation arrives is looked at once its requester had the retry window to retry. */
+    @Test
+    void anOpenImportIsLookedAtOnceItsRetryWindowPassed() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+                insertAttempt(connection, "ACCEPTED");
+                insertAttempt(connection, "FAILED");
+
+                // when
+                runMigration(connection, RECONCILIATION_RESOURCE);
+
+                // then
+                try (Statement statement = connection.createStatement();
+                        ResultSet rows = statement
+                                .executeQuery(
+                                        "SELECT state, next_check_at - created_at FROM key_import ORDER BY state")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getString(1)).isEqualTo("ACCEPTED");
+                    assertThat(rows.getString(2)).isEqualTo("00:15:00");
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getString(1)).isEqualTo("FAILED");
+                    assertThat(rows.getString(2)).isNull();
+                }
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
+    /** An instance that does not know the schedule yet records imports the reconciliation still looks at. */
+    @Test
+    void anImportRecordedWithoutItsScheduleIsLookedAtOnceItsRetryWindowPassed() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+                runMigration(connection, RECONCILIATION_RESOURCE);
+
+                // when
+                insertAttempt(connection, "REQUESTED");
+
+                // then
+                try (Statement statement = connection.createStatement();
+                        ResultSet rows = statement.executeQuery("SELECT next_check_at - created_at FROM key_import")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getString(1)).isEqualTo("00:15:00");
+                }
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
+    /** An open import last changed when it was last sent, so one sent again before the upgrade keeps its window. */
+    @Test
+    void anOpenImportIsScheduledFromItsLastSend() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+                insertAttempt(connection, "REQUESTED");
+                try (Statement statement = connection.createStatement()) {
+                    statement
+                            .executeUpdate("UPDATE key_import SET created_at = now() - interval '21 hours', "
+                                    + "updated_at = now() - interval '10 minutes'");
+                }
+
+                // when
+                runMigration(connection, RECONCILIATION_RESOURCE);
+
+                // then
+                try (Statement statement = connection.createStatement();
+                        ResultSet rows = statement
+                                .executeQuery("SELECT last_sent_at = updated_at, next_check_at - updated_at "
+                                        + "FROM key_import")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getBoolean(1)).isTrue();
+                    assertThat(rows.getString(2)).isEqualTo("00:15:00");
+                }
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
+    /** The reconciliation gives up on an import a while after it was last sent, so every import knows when that was. */
+    @Test
+    void everyImportKnowsWhenItWasLastSent() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+                insertAttempt(connection, "FAILED");
+
+                // when
+                runMigration(connection, RECONCILIATION_RESOURCE);
+                insertAttempt(connection, "REQUESTED");
+
+                // then
+                try (Statement statement = connection.createStatement();
+                        ResultSet rows = statement
+                                .executeQuery("SELECT count(*) FROM key_import WHERE last_sent_at = created_at")) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getInt(1)).isEqualTo(2);
+                }
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
+    @Test
+    void theReconciliationLooksOnlyAtImportsItHasToSettle() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            try {
+                // given
+                applyMigration(connection);
+
+                // when
+                runMigration(connection, RECONCILIATION_RESOURCE);
+
+                // then
+                try (Statement statement = connection.createStatement();
+                        ResultSet index = statement
+                                .executeQuery("SELECT indexdef FROM pg_indexes WHERE schemaname = '" + SCRATCH_SCHEMA
+                                        + "' AND indexname = 'idx_key_import_next_check_at'")) {
+                    assertThat(index.next()).isTrue();
+                    assertThat(index.getString(1)).contains("REQUESTED", "ACCEPTED", "COMPENSATING");
+                }
+            } finally {
+                dropScratchSchema(connection);
+            }
+        }
+    }
+
     private void applyMigration(Connection connection) throws Exception {
-        String migration = new ClassPathResource(MIGRATION_RESOURCE).getContentAsString(StandardCharsets.UTF_8);
         try (Statement statement = connection.createStatement()) {
             statement.execute("DROP SCHEMA IF EXISTS " + SCRATCH_SCHEMA + " CASCADE");
             statement.execute("CREATE SCHEMA " + SCRATCH_SCHEMA);
             statement.execute("SET search_path TO " + SCRATCH_SCHEMA);
+        }
+        runMigration(connection, MIGRATION_RESOURCE);
+    }
+
+    private static void runMigration(Connection connection, String resource) throws Exception {
+        String migration = new ClassPathResource(resource).getContentAsString(StandardCharsets.UTF_8);
+        try (Statement statement = connection.createStatement()) {
             statement.execute(migration);
         }
     }

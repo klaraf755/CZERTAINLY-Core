@@ -11,10 +11,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param pollInterval how long it waits between two questions
  * @param unresolvedAfter how long the outcome of an import can still be learned from its connector, which keeps a
  * record of it for at least 24 hours, so it has to be shorter; an older import the connector does not know is not sent
- * again
+ * again, and the reconciliation gives up on an import this long after it was last sent
+ * @param retryWindow how long an import is left to its requester's retries after each send before the reconciliation
+ * looks at it, and how long the reconciliation waits between two looks; it outlasts the request timeout and three
+ * connector calls at the connector timeouts configured (checked at startup), and with the sweep interval stays shorter
+ * than the time after which the reconciliation gives up
+ * @param sweepInterval how often the reconciliation runs
  */
 @ConfigurationProperties(prefix = "key-import")
-public record KeyImportProperties(Duration requestTimeout, Duration pollInterval, Duration unresolvedAfter) {
+public record KeyImportProperties(Duration requestTimeout, Duration pollInterval, Duration unresolvedAfter,
+        Duration retryWindow, Duration sweepInterval) {
 
     private static final Duration CONNECTOR_RETENTION = Duration.ofHours(24);
 
@@ -30,6 +36,12 @@ public record KeyImportProperties(Duration requestTimeout, Duration pollInterval
         if (unresolvedAfter.compareTo(CONNECTOR_RETENTION) >= 0) {
             throw new IllegalArgumentException(
                     "key-import.unresolved-after must be shorter than 24 hours, was " + unresolvedAfter);
+        }
+        retryWindow = positive(retryWindow == null ? Duration.ofMinutes(15) : retryWindow, "retry-window");
+        sweepInterval = positive(sweepInterval == null ? Duration.ofSeconds(60) : sweepInterval, "sweep-interval");
+        if (retryWindow.plus(sweepInterval).compareTo(unresolvedAfter) >= 0) {
+            throw new IllegalArgumentException("key-import.retry-window and key-import.sweep-interval together must "
+                    + "be shorter than key-import.unresolved-after, were " + retryWindow + " and " + sweepInterval);
         }
     }
 

@@ -11,12 +11,14 @@ class KeyImportPropertiesTest {
     @Test
     void theDefaultsApplyWhenNothingIsConfigured() {
         // when
-        KeyImportProperties properties = new KeyImportProperties(null, null, null);
+        KeyImportProperties properties = new KeyImportProperties(null, null, null, null, null);
 
         // then
         assertThat(properties.requestTimeout()).isEqualTo(Duration.ofSeconds(60));
         assertThat(properties.pollInterval()).isEqualTo(Duration.ofSeconds(2));
         assertThat(properties.unresolvedAfter()).isEqualTo(Duration.ofHours(20));
+        assertThat(properties.retryWindow()).isEqualTo(Duration.ofMinutes(15));
+        assertThat(properties.sweepInterval()).isEqualTo(Duration.ofSeconds(60));
     }
 
     @Test
@@ -27,15 +29,21 @@ class KeyImportPropertiesTest {
 
         // when
         // then
-        assertThatThrownBy(() -> new KeyImportProperties(zero, null, null))
+        assertThatThrownBy(() -> new KeyImportProperties(zero, null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("key-import.request-timeout");
-        assertThatThrownBy(() -> new KeyImportProperties(null, negative, null))
+        assertThatThrownBy(() -> new KeyImportProperties(null, negative, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("key-import.poll-interval");
-        assertThatThrownBy(() -> new KeyImportProperties(null, null, zero))
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, zero, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("key-import.unresolved-after");
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, null, negative, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("key-import.retry-window");
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, null, null, zero))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("key-import.sweep-interval");
     }
 
     /** The request sleeps in whole milliseconds, so a shorter poll interval would ask the connector without a pause. */
@@ -46,7 +54,7 @@ class KeyImportPropertiesTest {
 
         // when
         // then
-        assertThatThrownBy(() -> new KeyImportProperties(null, microsecond, null))
+        assertThatThrownBy(() -> new KeyImportProperties(null, microsecond, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("key-import.poll-interval must be at least a millisecond, was PT0.000001S");
     }
@@ -59,8 +67,27 @@ class KeyImportPropertiesTest {
 
         // when
         // then
-        assertThatThrownBy(() -> new KeyImportProperties(null, null, day))
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, day, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("key-import.unresolved-after must be shorter than 24 hours, was PT24H");
+    }
+
+    /** The first look at an import comes up to a sweep after its retry window, and must come before it is given up. */
+    @Test
+    void aSweepThatCouldComeOnlyAfterUnresolvedAfterIsRefused() {
+        // given
+        Duration hour = Duration.ofHours(1);
+        Duration day = Duration.ofHours(24);
+
+        // when
+        // then
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, hour, hour, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("key-import.retry-window and key-import.sweep-interval together must be shorter than "
+                        + "key-import.unresolved-after, were PT1H and PT1M");
+        assertThatThrownBy(() -> new KeyImportProperties(null, null, null, null, day))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("key-import.retry-window and key-import.sweep-interval together must be shorter than "
+                        + "key-import.unresolved-after, were PT15M and PT24H");
     }
 }
