@@ -72,6 +72,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.NoTransactionException;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 @Service(Resource.Codes.USER)
 @Transactional
@@ -472,9 +474,25 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                     .updateObjectCustomAttributesContent(Resource.CERTIFICATE, certificate.getUuid(),
                             certificateCustomAttributes);
         } catch (AttributeException e) {
+            markCurrentTransactionRollbackOnly();
             logger.getLogger().error("Cannot set custom attributes of certificate {}", certificate.getUuid(), e);
             throw new CertificateException(
                     "Cannot set custom attributes of the certificate that should be assigned to the user");
+        } catch (NotFoundException e) {
+            markCurrentTransactionRollbackOnly();
+            throw e;
+        }
+    }
+
+    /**
+     * The engine clears the content the caller is allowed to edit before it refuses an attribute they are not, and both
+     * failures are checked, so without this the partial delete commits with the rejected request.
+     */
+    private void markCurrentTransactionRollbackOnly() {
+        try {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        } catch (NoTransactionException e) {
+            logger.getLogger().debug("No active transaction to roll back for the failed certificate attribute write");
         }
     }
 

@@ -37,6 +37,7 @@ import com.otilm.core.service.UserManagementExternalService;
 import com.otilm.core.util.BaseSpringBootTest;
 import com.otilm.core.util.CertificateUtil;
 import com.otilm.core.util.SessionTableHelper;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -183,6 +184,30 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         Assertions
                 .assertEquals(List.of("High"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityByFingerprint"));
+    }
+
+    @Test
+    void testForbiddenCustomAttributePreservesExistingCertificateContent() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-forbidden-attribute-fingerprint");
+        RequestAttribute allowed = registerCertificateCustomAttribute("criticalityAllowed", "Medium");
+        RequestAttribute forbidden = registerCertificateCustomAttribute("criticalityForbidden", "High");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(allowed));
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+        // The caller may edit the attribute the certificate already carries, but not the one being submitted, so
+        // the engine's scoped delete runs before the per-attribute check refuses the write.
+        restrictObjectAccess(Resource.ATTRIBUTE, ResourceAction.MEMBERS, List.of(allowed.getUuid()));
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithForbiddenCertificateAttribute");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(forbidden));
+
+        Assertions.assertThrows(CertificateException.class, () -> userManagementService.createUser(request));
+        Assertions
+                .assertEquals(List.of("Medium"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityAllowed"));
     }
 
     @Test
