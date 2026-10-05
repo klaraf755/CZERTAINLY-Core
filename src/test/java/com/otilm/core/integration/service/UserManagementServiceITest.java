@@ -187,6 +187,31 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void testCertificateCustomAttributesNotWrittenWhenAuthServiceCallFails() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-auth-failure-fingerprint");
+        RequestAttribute alreadySet = registerCertificateCustomAttribute("criticalityBeforeAuthFailure", "Medium");
+        RequestAttribute submitted = registerCertificateCustomAttribute("criticalityAfterAuthFailure", "High");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(alreadySet));
+        when(userManagementApiClient.createUser(any())).thenThrow(new IllegalStateException("auth service down"));
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userRejectedByAuthService");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(submitted));
+
+        Assertions.assertThrows(IllegalStateException.class, () -> userManagementService.createUser(request));
+
+        Assertions
+                .assertEquals(List.of("Medium"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityBeforeAuthFailure"));
+        Assertions
+                .assertTrue(
+                        certificateCustomAttributeValues(existingCertificate, "criticalityAfterAuthFailure").isEmpty());
+    }
+
+    @Test
     void testForbiddenCustomAttributePreservesExistingCertificateContent() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-forbidden-attribute-fingerprint");
         RequestAttribute allowed = registerCertificateCustomAttribute("criticalityAllowed", "Medium");

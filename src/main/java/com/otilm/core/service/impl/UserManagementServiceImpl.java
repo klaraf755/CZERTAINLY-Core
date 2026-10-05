@@ -54,7 +54,6 @@ import com.otilm.core.service.UserManagementInternalService;
 import com.otilm.core.settings.SettingsCache;
 import com.otilm.core.util.CertificateUtil;
 import com.otilm.core.util.OAuth2Util;
-import jakarta.transaction.Transactional;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateExpiredException;
@@ -72,8 +71,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.NoTransactionException;
-import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 
 @Service(Resource.Codes.USER)
 @Transactional
@@ -87,6 +89,8 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     private UserManagementApiClient userManagementApiClient;
 
     private CertificateInternalService certificateService;
+
+    private PlatformTransactionManager transactionManager;
     private CertificateUploadService certificateUploadService;
     private GroupExternalService groupService;
     private ResourceObjectAssociationService objectAssociationService;
@@ -132,6 +136,11 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Autowired
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+
+    @Autowired
     public void setCertificateService(CertificateInternalService certificateService) {
         this.certificateService = certificateService;
     }
@@ -173,6 +182,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.CREATE)
     public UserDetailDto createUser(AddUserRequestDto request)
             throws CertificateException, NotFoundException, AttributeException {
@@ -183,13 +193,13 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         UserRequestDto requestDto = new UserRequestDto();
         requestDto.setGroups(resolveGroups(request.getGroupUuids()));
 
-        Certificate certificate = null;
+        ResolvedCertificate resolved = null;
         if (StringUtils.isNotBlank(request.getCertificateUuid())
                 || StringUtils.isNotBlank(request.getCertificateData())) {
-            certificate = addUserCertificate(null, request.getCertificateUuid(), request.getCertificateData(),
+            resolved = resolveUserCertificate(null, request.getCertificateUuid(), request.getCertificateData(),
                     request.getCertificateCustomAttributes());
-            requestDto.setCertificateUuid(certificate.getUuid().toString());
-            requestDto.setCertificateFingerprint(certificate.getFingerprint());
+            requestDto.setCertificateUuid(resolved.certificate().getUuid().toString());
+            requestDto.setCertificateFingerprint(resolved.certificate().getFingerprint());
         }
         requestDto.setEmail(request.getEmail());
         requestDto.setEnabled(request.getEnabled());
@@ -199,20 +209,30 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         requestDto.setDescription(request.getDescription());
 
         UserDetailDto response = userManagementApiClient.createUser(requestDto);
-        if (certificate != null) {
-            certificateService.updateCertificateUser(certificate.getUuid(), response.getUuid());
-        }
 
-        response
-                .setCustomAttributes(attributeEngine
-                        .updateObjectCustomAttributesContent(Resource.USER, UUID.fromString(response.getUuid()),
-                                request.getCustomAttributes()));
+        ResolvedCertificate assigned = resolved;
+        TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
+        try {
+            if (assigned != null) {
+                certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
+                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
+            }
+            response
+                    .setCustomAttributes(attributeEngine
+                            .updateObjectCustomAttributesContent(Resource.USER, UUID.fromString(response.getUuid()),
+                                    request.getCustomAttributes()));
+            transactionManager.commit(status);
+        } catch (RuntimeException | AttributeException | NotFoundException | CertificateException e) {
+            transactionManager.rollback(status);
+            throw e;
+        }
 
         logger.logEvent(Operation.CREATE, OperationResult.SUCCESS, response.toLogData(), null, null);
         return response;
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.UPDATE)
     public UserDetailDto updateUser(String userUuid, UpdateUserRequestDto request)
             throws NotFoundException, CertificateException, AttributeException {
@@ -227,6 +247,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     // Internal Use Only -- For Auth Profile Update API
     public UserDetailDto updateUserInternal(String userUuid, UpdateUserRequestDto request, String certificateUuid,
             String certificateFingerprint) throws NotFoundException, CertificateException {
@@ -419,7 +440,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         return groups;
     }
 
-    private Certificate addUserCertificate(String userUuid, String certificateUuid, String certificateData,
+    private ResolvedCertificate resolveUserCertificate(String userUuid, String certificateUuid, String certificateData,
             List<RequestAttribute> certificateCustomAttributes) throws CertificateException, NotFoundException {
         Certificate certificate = null;
         boolean uploadCertificate = false;
@@ -445,7 +466,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         }
 
         if (uploadCertificate) {
-            certificate = uploadCertificate(certificateData, certificateCustomAttributes);
+            return new ResolvedCertificate(uploadCertificate(certificateData, certificateCustomAttributes), true);
         } else {
             if (certificate.isArchived()) {
                 throw new ValidationException("Cannot assign archived certificate to the user.");
@@ -460,39 +481,31 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                         .create("Cannot assign certificate to the user because it is already assigned to other user"));
             }
             if (certificateCustomAttributes != null && !certificateCustomAttributes.isEmpty()) {
-                applyCertificateCustomAttributes(certificate, certificateCustomAttributes);
+                certificateService.evaluatePermissionChain(SecuredUUID.fromUUID(certificate.getUuid()));
             }
         }
-        return certificate;
+        return new ResolvedCertificate(certificate, false);
     }
 
-    private void applyCertificateCustomAttributes(Certificate certificate,
-            List<RequestAttribute> certificateCustomAttributes) throws CertificateException, NotFoundException {
-        certificateService.evaluatePermissionChain(SecuredUUID.fromUUID(certificate.getUuid()));
+    /** Carries whether the certificate was uploaded by this request, which decides where its attributes are written. */
+    private record ResolvedCertificate(Certificate certificate, boolean uploaded) {
+    }
+
+    private void applyCertificateCustomAttributes(ResolvedCertificate resolved,
+            List<RequestAttribute> certificateCustomAttributes) throws CertificateException {
+        if (resolved.uploaded() || certificateCustomAttributes == null || certificateCustomAttributes.isEmpty()) {
+            return;
+        }
         try {
             attributeEngine
-                    .updateObjectCustomAttributesContent(Resource.CERTIFICATE, certificate.getUuid(),
+                    .updateObjectCustomAttributesContent(Resource.CERTIFICATE, resolved.certificate().getUuid(),
                             certificateCustomAttributes);
-        } catch (AttributeException e) {
-            markCurrentTransactionRollbackOnly();
-            logger.getLogger().error("Cannot set custom attributes of certificate {}", certificate.getUuid(), e);
+        } catch (AttributeException | NotFoundException e) {
+            logger
+                    .getLogger()
+                    .error("Cannot set custom attributes of certificate {}", resolved.certificate().getUuid(), e);
             throw new CertificateException(
                     "Cannot set custom attributes of the certificate that should be assigned to the user");
-        } catch (NotFoundException e) {
-            markCurrentTransactionRollbackOnly();
-            throw e;
-        }
-    }
-
-    /**
-     * The engine clears the content the caller is allowed to edit before it refuses an attribute they are not, and both
-     * failures are checked, so without this the partial delete commits with the rejected request.
-     */
-    private void markCurrentTransactionRollbackOnly() {
-        try {
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-        } catch (NoTransactionException e) {
-            logger.getLogger().debug("No active transaction to roll back for the failed certificate attribute write");
         }
     }
 
@@ -514,7 +527,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
 
     private UserDetailDto getUserUpdateRequestPayload(String userUuid, UpdateUserRequestDto request,
             String certificateUuid, String certificateFingerPrint) throws NotFoundException, CertificateException {
-        Certificate certificate = null;
+        ResolvedCertificate resolved = null;
         UserUpdateRequestDto requestDto = new UserUpdateRequestDto();
         if (request.getGroupUuids() != null) {
             requestDto.setGroups(resolveGroups(request.getGroupUuids()));
@@ -522,10 +535,10 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
 
         if (StringUtils.isNotBlank(request.getCertificateUuid())
                 || StringUtils.isNotBlank(request.getCertificateData())) {
-            certificate = addUserCertificate(userUuid, request.getCertificateUuid(), request.getCertificateData(),
+            resolved = resolveUserCertificate(userUuid, request.getCertificateUuid(), request.getCertificateData(),
                     request.getCertificateCustomAttributes());
-            requestDto.setCertificateUuid(certificate.getUuid().toString());
-            requestDto.setCertificateFingerprint(certificate.getFingerprint());
+            requestDto.setCertificateUuid(resolved.certificate().getUuid().toString());
+            requestDto.setCertificateFingerprint(resolved.certificate().getFingerprint());
         } else {
             if (!certificateUuid.isEmpty()) {
                 requestDto.setCertificateUuid(certificateUuid);
@@ -542,13 +555,22 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
 
         UserDetailDto response = userManagementApiClient.updateUser(userUuid, requestDto);
 
+        ResolvedCertificate assigned = resolved;
+        TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
         try {
-            certificateService.removeCertificateUser(UUID.fromString(response.getUuid()));
-        } catch (Exception e) {
-            logger.getLogger().info("Unable to remove user uuid. It may not exists {}", e.getMessage());
-        }
-        if (certificate != null) {
-            certificateService.updateCertificateUser(certificate.getUuid(), response.getUuid());
+            try {
+                certificateService.removeCertificateUser(UUID.fromString(response.getUuid()));
+            } catch (Exception e) {
+                logger.getLogger().info("Unable to remove user uuid. It may not exists {}", e.getMessage());
+            }
+            if (assigned != null) {
+                certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
+                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
+            }
+            transactionManager.commit(status);
+        } catch (RuntimeException | CertificateException e) {
+            transactionManager.rollback(status);
+            throw e;
         }
         return response;
     }
