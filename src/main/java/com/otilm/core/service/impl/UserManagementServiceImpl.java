@@ -458,13 +458,25 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                         .create("Cannot assign certificate to the user because it is already assigned to other user"));
             }
             if (certificateCustomAttributes != null && !certificateCustomAttributes.isEmpty()) {
-                logger
-                        .getLogger()
-                        .warn("Certificate custom attributes were provided but ignored because certificate {} already exists in the inventory and was not uploaded",
-                                certificate.getUuid());
+                applyCertificateCustomAttributes(certificate, certificateCustomAttributes);
             }
         }
         return certificate;
+    }
+
+    private void applyCertificateCustomAttributes(Certificate certificate,
+            List<RequestAttribute> certificateCustomAttributes) throws CertificateException {
+        try {
+            attributeEngine
+                    .updateObjectCustomAttributesContent(Resource.CERTIFICATE, certificate.getUuid(),
+                            certificateCustomAttributes);
+        } catch (ValidationException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new CertificateException(
+                    "Cannot set custom attributes of the certificate that should be assigned to the user: "
+                            + e.getMessage());
+        }
     }
 
     private Certificate uploadCertificate(String certificateData, List<RequestAttribute> certificateCustomAttributes)

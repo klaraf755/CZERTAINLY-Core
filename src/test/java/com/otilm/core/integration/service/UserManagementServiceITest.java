@@ -3,9 +3,12 @@ package com.otilm.core.integration.service;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.attribute.RequestAttributeV3;
+import com.otilm.api.model.client.attribute.ResponseAttribute;
+import com.otilm.api.model.client.attribute.custom.CustomAttributeCreateRequestDto;
 import com.otilm.api.model.client.auth.AddUserRequestDto;
 import com.otilm.api.model.client.auth.UpdateUserRequestDto;
 import com.otilm.api.model.common.NameAndUuidDto;
+import com.otilm.api.model.common.attribute.common.AttributeContent;
 import com.otilm.api.model.common.attribute.common.content.AttributeContentType;
 import com.otilm.api.model.common.attribute.v3.content.StringAttributeContentV3;
 import com.otilm.api.model.core.auth.Resource;
@@ -26,12 +29,14 @@ import com.otilm.core.dao.repository.GroupRepository;
 import com.otilm.core.dao.repository.ListViewRepository;
 import com.otilm.core.helpers.CertificateGeneratorHelper;
 import com.otilm.core.security.authn.client.UserManagementApiClient;
+import com.otilm.core.service.AttributeExternalService;
 import com.otilm.core.service.CertificateUploadService;
 import com.otilm.core.service.UserManagementExternalService;
 import com.otilm.core.util.BaseSpringBootTest;
 import com.otilm.core.util.CertificateUtil;
 import com.otilm.core.util.SessionTableHelper;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -75,6 +80,9 @@ class UserManagementServiceITest extends BaseSpringBootTest {
 
     @Autowired
     private AttributeEngine attributeEngine;
+
+    @Autowired
+    private AttributeExternalService attributeService;
 
     @Autowired
     private FindByIndexNameSessionRepository sessionRepository;
@@ -135,43 +143,86 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
-    void testCertificateCustomAttributesIgnoredForExistingCertificateReferencedByUuid() throws Exception {
+    void testCertificateCustomAttributesAppliedToExistingCertificateReferencedByUuid() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-by-uuid-fingerprint");
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityByUuid", "Low");
         when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
 
         AddUserRequestDto request = new AddUserRequestDto();
         request.setUsername("userWithExistingCertificateByUuid");
         request.setCertificateUuid(existingCertificate.getUuid().toString());
-        request.setCertificateCustomAttributes(List.of(certificateCustomAttribute()));
+        request.setCertificateCustomAttributes(List.of(attribute));
 
         userManagementService.createUser(request);
 
         verify(certificateUploadService, never()).upload(any(), any(), anyBoolean());
         Assertions
-                .assertTrue(attributeEngine
-                        .getObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid())
-                        .isEmpty());
+                .assertEquals(List.of("Low"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityByUuid"));
     }
 
     @Test
-    void testCertificateCustomAttributesIgnoredForExistingCertificateMatchedByFingerprint() throws Exception {
+    void testCertificateCustomAttributesAppliedToExistingCertificateMatchedByFingerprint() throws Exception {
         X509Certificate x509Certificate = CertificateGeneratorHelper
                 .generateCACertificate(null, "CN=existing-user-cert");
         Certificate existingCertificate = saveCertificate(CertificateUtil.getThumbprint(x509Certificate));
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityByFingerprint", "High");
         when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
 
         AddUserRequestDto request = new AddUserRequestDto();
         request.setUsername("userWithExistingCertificateByFingerprint");
         request.setCertificateData(Base64.getEncoder().encodeToString(x509Certificate.getEncoded()));
-        request.setCertificateCustomAttributes(List.of(certificateCustomAttribute()));
+        request.setCertificateCustomAttributes(List.of(attribute));
 
         userManagementService.createUser(request);
 
         verify(certificateUploadService, never()).upload(any(), any(), anyBoolean());
         Assertions
-                .assertTrue(attributeEngine
-                        .getObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid())
-                        .isEmpty());
+                .assertEquals(List.of("High"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityByFingerprint"));
+    }
+
+    @Test
+    void testSubmittedCustomAttributesReplaceThoseAlreadyOnExistingCertificate() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-replaced-fingerprint");
+        RequestAttribute alreadySet = registerCertificateCustomAttribute("criticalityAlreadySet", "Medium");
+        RequestAttribute submitted = registerCertificateCustomAttribute("criticalitySubmitted", "High");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(alreadySet));
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithExistingCertificateAndReplacedAttributes");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(submitted));
+
+        userManagementService.createUser(request);
+
+        Assertions
+                .assertEquals(List.of("High"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalitySubmitted"));
+        Assertions.assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityAlreadySet").isEmpty());
+    }
+
+    @Test
+    void testExistingCertificateKeepsItsCustomAttributesWhenRequestCarriesNone() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-untouched-fingerprint");
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityUntouched", "Medium");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(attribute));
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithExistingCertificateAndNoAttributes");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+
+        userManagementService.createUser(request);
+
+        Assertions
+                .assertEquals(List.of("Medium"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityUntouched"));
     }
 
     @Test
@@ -263,6 +314,38 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         certificate.setCertificateContent(certificateContent);
         certificateRepository.save(certificate);
         return certificate;
+    }
+
+    private RequestAttribute registerCertificateCustomAttribute(String name, String value) throws Exception {
+        CustomAttributeCreateRequestDto definition = new CustomAttributeCreateRequestDto();
+        definition.setName(name);
+        definition.setLabel(name);
+        definition.setResources(List.of(Resource.CERTIFICATE));
+        definition.setContentType(AttributeContentType.STRING);
+        String uuid = attributeService.createCustomAttribute(definition).getUuid();
+
+        RequestAttributeV3 attribute = new RequestAttributeV3();
+        attribute.setUuid(UUID.fromString(uuid));
+        attribute.setName(name);
+        attribute.setContentType(AttributeContentType.STRING);
+        attribute.setContent(List.of(new StringAttributeContentV3(value)));
+        return attribute;
+    }
+
+    private List<String> certificateCustomAttributeValues(Certificate certificate, String name) {
+        List<String> values = new ArrayList<>();
+        for (ResponseAttribute attribute : attributeEngine
+                .getObjectCustomAttributesContent(Resource.CERTIFICATE, certificate.getUuid())) {
+            if (!attribute.getName().equals(name)) {
+                continue;
+            }
+            List<AttributeContent> content = attribute.getContent();
+            content.forEach(item -> {
+                Object data = item.getData();
+                values.add(String.valueOf(data));
+            });
+        }
+        return values;
     }
 
     private static RequestAttribute certificateCustomAttribute() {
