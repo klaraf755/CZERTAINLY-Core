@@ -217,7 +217,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                 certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
                 transactionManager.commit(association);
             } catch (RuntimeException | NotFoundException e) {
-                transactionManager.rollback(association);
+                rollbackIfIncomplete(association);
                 throw e;
             }
         }
@@ -233,7 +233,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                                     request.getCustomAttributes()));
             transactionManager.commit(metadata);
         } catch (RuntimeException | AttributeException | NotFoundException | CertificateException e) {
-            transactionManager.rollback(metadata);
+            rollbackIfIncomplete(metadata);
             throw e;
         }
 
@@ -502,6 +502,16 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     private record ResolvedCertificate(Certificate certificate, boolean uploaded) {
     }
 
+    /**
+     * A commit-time failure already completes the transaction, and rolling back a completed one throws and masks the
+     * original exception.
+     */
+    private void rollbackIfIncomplete(TransactionStatus status) {
+        if (!status.isCompleted()) {
+            transactionManager.rollback(status);
+        }
+    }
+
     private void applyCertificateCustomAttributes(ResolvedCertificate resolved,
             List<RequestAttribute> certificateCustomAttributes) throws CertificateException {
         if (resolved.uploaded() || certificateCustomAttributes == null || certificateCustomAttributes.isEmpty()) {
@@ -579,7 +589,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             }
             transactionManager.commit(association);
         } catch (RuntimeException | NotFoundException e) {
-            transactionManager.rollback(association);
+            rollbackIfIncomplete(association);
             throw e;
         }
 
@@ -589,7 +599,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
                 applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
                 transactionManager.commit(metadata);
             } catch (RuntimeException | CertificateException e) {
-                transactionManager.rollback(metadata);
+                rollbackIfIncomplete(metadata);
                 throw e;
             }
         }

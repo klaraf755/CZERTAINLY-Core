@@ -187,6 +187,40 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void testUpdateUserAppliesCertificateCustomAttributesToExistingCertificate() throws Exception {
+        Certificate existingCertificate = saveCertificate("update-existing-attributes-fingerprint");
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityOnUpdate", "High");
+        when(userManagementApiClient.updateUser(anyString(), any())).thenReturn(userDetailDto());
+
+        UpdateUserRequestDto request = new UpdateUserRequestDto();
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(attribute));
+
+        userManagementService.updateUser(UUID.randomUUID().toString(), request);
+
+        Assertions
+                .assertEquals(List.of("High"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityOnUpdate"));
+    }
+
+    @Test
+    void testUpdateUserRefusesCertificateCustomAttributesWithoutCertificateUpdatePermission() throws Exception {
+        Certificate existingCertificate = saveCertificate("update-unauthorized-fingerprint");
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityUpdateDenied", "Low");
+        when(userManagementApiClient.updateUser(anyString(), any())).thenReturn(userDetailDto());
+        denyResourceAccess(Resource.CERTIFICATE, ResourceAction.UPDATE);
+
+        UpdateUserRequestDto request = new UpdateUserRequestDto();
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(attribute));
+
+        String userUuid = UUID.randomUUID().toString();
+        Assertions.assertThrows(AccessDeniedException.class, () -> userManagementService.updateUser(userUuid, request));
+        Assertions
+                .assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityUpdateDenied").isEmpty());
+    }
+
+    @Test
     void testInvalidCertificateCustomAttributesRejectedBeforeUserIsCreated() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-invalid-attribute-fingerprint");
         when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
