@@ -171,6 +171,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
+    @Transactional(rollbackOn = Exception.class)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.CREATE)
     public UserDetailDto createUser(AddUserRequestDto request)
             throws CertificateException, NotFoundException, AttributeException {
@@ -211,6 +212,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
+    @Transactional(rollbackOn = Exception.class)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.UPDATE)
     public UserDetailDto updateUser(String userUuid, UpdateUserRequestDto request)
             throws NotFoundException, CertificateException, AttributeException {
@@ -225,6 +227,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
+    @Transactional(rollbackOn = Exception.class)
     // Internal Use Only -- For Auth Profile Update API
     public UserDetailDto updateUserInternal(String userUuid, UpdateUserRequestDto request, String certificateUuid,
             String certificateFingerprint) throws NotFoundException, CertificateException {

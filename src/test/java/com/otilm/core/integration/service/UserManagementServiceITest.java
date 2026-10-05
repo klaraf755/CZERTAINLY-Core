@@ -1,5 +1,6 @@
 package com.otilm.core.integration.service;
 
+import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttribute;
 import com.otilm.api.model.client.attribute.RequestAttributeV3;
@@ -182,6 +183,29 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         Assertions
                 .assertEquals(List.of("High"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityByFingerprint"));
+    }
+
+    @Test
+    void testCertificateCustomAttributesRolledBackWhenGroupResolutionFails() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-rolled-back-fingerprint");
+        RequestAttribute alreadySet = registerCertificateCustomAttribute("criticalityBeforeRollback", "Medium");
+        RequestAttribute submitted = registerCertificateCustomAttribute("criticalityRolledBack", "High");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(alreadySet));
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithUnknownGroup");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(submitted));
+        request.setGroupUuids(List.of(UUID.randomUUID().toString()));
+
+        Assertions.assertThrows(NotFoundException.class, () -> userManagementService.createUser(request));
+
+        Assertions
+                .assertEquals(List.of("Medium"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityBeforeRollback"));
+        Assertions.assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityRolledBack").isEmpty());
     }
 
     @Test
