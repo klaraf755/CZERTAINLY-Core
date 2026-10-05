@@ -28,6 +28,7 @@ import com.otilm.core.dao.repository.CertificateRepository;
 import com.otilm.core.dao.repository.GroupRepository;
 import com.otilm.core.dao.repository.ListViewRepository;
 import com.otilm.core.helpers.CertificateGeneratorHelper;
+import com.otilm.core.model.auth.ResourceAction;
 import com.otilm.core.security.authn.client.UserManagementApiClient;
 import com.otilm.core.service.AttributeExternalService;
 import com.otilm.core.service.CertificateUploadService;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -180,6 +182,23 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         Assertions
                 .assertEquals(List.of("High"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityByFingerprint"));
+    }
+
+    @Test
+    void testCertificateCustomAttributesRefusedWithoutCertificateUpdatePermission() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-unauthorized-fingerprint");
+        RequestAttribute attribute = registerCertificateCustomAttribute("criticalityUnauthorized", "Low");
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+        denyResourceAccess(Resource.CERTIFICATE, ResourceAction.UPDATE);
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithoutCertificateUpdatePermission");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(attribute));
+
+        Assertions.assertThrows(AccessDeniedException.class, () -> userManagementService.createUser(request));
+        Assertions
+                .assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityUnauthorized").isEmpty());
     }
 
     @Test

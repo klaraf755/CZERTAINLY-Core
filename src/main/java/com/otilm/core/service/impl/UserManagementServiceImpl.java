@@ -465,17 +465,16 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     private void applyCertificateCustomAttributes(Certificate certificate,
-            List<RequestAttribute> certificateCustomAttributes) throws CertificateException {
+            List<RequestAttribute> certificateCustomAttributes) throws CertificateException, NotFoundException {
+        certificateService.evaluatePermissionChain(SecuredUUID.fromUUID(certificate.getUuid()));
         try {
             attributeEngine
                     .updateObjectCustomAttributesContent(Resource.CERTIFICATE, certificate.getUuid(),
                             certificateCustomAttributes);
-        } catch (ValidationException e) {
-            throw e;
-        } catch (Exception e) {
+        } catch (AttributeException e) {
+            logger.getLogger().error("Cannot set custom attributes of certificate {}", certificate.getUuid(), e);
             throw new CertificateException(
-                    "Cannot set custom attributes of the certificate that should be assigned to the user: "
-                            + e.getMessage());
+                    "Cannot set custom attributes of the certificate that should be assigned to the user");
         }
     }
 
