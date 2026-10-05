@@ -187,6 +187,20 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void testInvalidCertificateCustomAttributesRejectedBeforeUserIsCreated() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-invalid-attribute-fingerprint");
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithInvalidCertificateAttribute");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(certificateCustomAttribute()));
+
+        Assertions.assertThrows(ValidationException.class, () -> userManagementService.createUser(request));
+        verify(userManagementApiClient, never()).createUser(any());
+    }
+
+    @Test
     void testCertificateCustomAttributesNotWrittenWhenAuthServiceCallFails() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-auth-failure-fingerprint");
         RequestAttribute alreadySet = registerCertificateCustomAttribute("criticalityBeforeAuthFailure", "Medium");

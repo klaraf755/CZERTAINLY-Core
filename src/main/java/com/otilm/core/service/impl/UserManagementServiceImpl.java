@@ -211,19 +211,29 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         UserDetailDto response = userManagementApiClient.createUser(requestDto);
 
         ResolvedCertificate assigned = resolved;
-        TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
+        if (assigned != null) {
+            TransactionStatus association = transactionManager.getTransaction(new DefaultTransactionDefinition());
+            try {
+                certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
+                transactionManager.commit(association);
+            } catch (RuntimeException | NotFoundException e) {
+                transactionManager.rollback(association);
+                throw e;
+            }
+        }
+
+        TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
         try {
             if (assigned != null) {
-                certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
                 applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
             }
             response
                     .setCustomAttributes(attributeEngine
                             .updateObjectCustomAttributesContent(Resource.USER, UUID.fromString(response.getUuid()),
                                     request.getCustomAttributes()));
-            transactionManager.commit(status);
+            transactionManager.commit(metadata);
         } catch (RuntimeException | AttributeException | NotFoundException | CertificateException e) {
-            transactionManager.rollback(status);
+            transactionManager.rollback(metadata);
             throw e;
         }
 
@@ -482,6 +492,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             }
             if (certificateCustomAttributes != null && !certificateCustomAttributes.isEmpty()) {
                 certificateService.evaluatePermissionChain(SecuredUUID.fromUUID(certificate.getUuid()));
+                attributeEngine.validateCustomAttributesContent(Resource.CERTIFICATE, certificateCustomAttributes);
             }
         }
         return new ResolvedCertificate(certificate, false);
@@ -556,7 +567,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         UserDetailDto response = userManagementApiClient.updateUser(userUuid, requestDto);
 
         ResolvedCertificate assigned = resolved;
-        TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
+        TransactionStatus association = transactionManager.getTransaction(new DefaultTransactionDefinition());
         try {
             try {
                 certificateService.removeCertificateUser(UUID.fromString(response.getUuid()));
@@ -565,12 +576,22 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             }
             if (assigned != null) {
                 certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
-                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
             }
-            transactionManager.commit(status);
-        } catch (RuntimeException | CertificateException e) {
-            transactionManager.rollback(status);
+            transactionManager.commit(association);
+        } catch (RuntimeException | NotFoundException e) {
+            transactionManager.rollback(association);
             throw e;
+        }
+
+        if (assigned != null) {
+            TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
+            try {
+                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
+                transactionManager.commit(metadata);
+            } catch (RuntimeException | CertificateException e) {
+                transactionManager.rollback(metadata);
+                throw e;
+            }
         }
         return response;
     }
