@@ -191,7 +191,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
-    void testAuthenticationCacheEvictedWhenCertificateAttributeWriteFails() throws Exception {
+    void testAuthenticationCacheEvictedWhenCertificateAttributesRefused() throws Exception {
         Certificate existingCertificate = saveCertificate("update-cache-eviction-fingerprint");
         RequestAttribute allowed = registerCertificateCustomAttribute("criticalityCacheAllowed", "Medium");
         RequestAttribute forbidden = registerCertificateCustomAttribute("criticalityCacheForbidden", "High");
@@ -300,6 +300,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         request.setCertificateCustomAttributes(List.of(forbidden));
 
         Assertions.assertThrows(CertificateException.class, () -> userManagementService.createUser(request));
+        verify(userManagementApiClient, never()).createUser(any());
         Assertions
                 .assertEquals(List.of("Medium"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityAllowed"));
@@ -341,6 +342,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         request.setCertificateCustomAttributes(List.of(attribute));
 
         Assertions.assertThrows(AccessDeniedException.class, () -> userManagementService.createUser(request));
+        verify(userManagementApiClient, never()).createUser(any());
         Assertions
                 .assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityUnauthorized").isEmpty());
     }

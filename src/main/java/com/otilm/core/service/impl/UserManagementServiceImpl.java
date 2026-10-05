@@ -500,6 +500,7 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             if (certificateCustomAttributes != null && !certificateCustomAttributes.isEmpty()) {
                 certificateService.evaluatePermissionChain(SecuredUUID.fromUUID(certificate.getUuid()));
                 attributeEngine.validateCustomAttributesContent(Resource.CERTIFICATE, certificateCustomAttributes);
+                checkCertificateCustomAttributePermissions(certificateCustomAttributes);
             }
         }
         return new ResolvedCertificate(certificate, false);
@@ -507,6 +508,21 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
 
     /** Carries whether the certificate was uploaded by this request, which decides where its attributes are written. */
     private record ResolvedCertificate(Certificate certificate, boolean uploaded) {
+    }
+
+    /**
+     * Content validation drops the attributes the caller may not edit instead of refusing them, so without this the
+     * refusal would come from the write, after the auth service has already accepted the user.
+     */
+    private void checkCertificateCustomAttributePermissions(List<RequestAttribute> certificateCustomAttributes)
+            throws CertificateException, NotFoundException {
+        try {
+            attributeEngine.validateCustomAttributesUpdatePermissions(certificateCustomAttributes);
+        } catch (AttributeException e) {
+            logger.getLogger().error("Refused certificate custom attributes for the user request", e);
+            throw new CertificateException(
+                    "Cannot set custom attributes of the certificate that should be assigned to the user");
+        }
     }
 
     private void detachCurrentCertificateUser(String userUuid) {
