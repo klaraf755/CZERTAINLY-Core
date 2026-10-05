@@ -171,7 +171,6 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
-    @Transactional(rollbackOn = Exception.class)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.CREATE)
     public UserDetailDto createUser(AddUserRequestDto request)
             throws CertificateException, NotFoundException, AttributeException {
@@ -180,6 +179,8 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             throw new ValidationException(ValidationError.create("username must not be empty"));
         }
         UserRequestDto requestDto = new UserRequestDto();
+        requestDto.setGroups(resolveGroups(request.getGroupUuids()));
+
         Certificate certificate = null;
         if (StringUtils.isNotBlank(request.getCertificateUuid())
                 || StringUtils.isNotBlank(request.getCertificateData())) {
@@ -194,8 +195,6 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         requestDto.setFirstName(request.getFirstName());
         requestDto.setLastName(request.getLastName());
         requestDto.setDescription(request.getDescription());
-
-        requestDto.setGroups(resolveGroups(request.getGroupUuids()));
 
         UserDetailDto response = userManagementApiClient.createUser(requestDto);
         if (certificate != null) {
@@ -212,7 +211,6 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
-    @Transactional(rollbackOn = Exception.class)
     @ExternalAuthorization(resource = Resource.USER, action = ResourceAction.UPDATE)
     public UserDetailDto updateUser(String userUuid, UpdateUserRequestDto request)
             throws NotFoundException, CertificateException, AttributeException {
@@ -227,7 +225,6 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
     }
 
     @Override
-    @Transactional(rollbackOn = Exception.class)
     // Internal Use Only -- For Auth Profile Update API
     public UserDetailDto updateUserInternal(String userUuid, UpdateUserRequestDto request, String certificateUuid,
             String certificateFingerprint) throws NotFoundException, CertificateException {
@@ -501,6 +498,9 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             String certificateUuid, String certificateFingerPrint) throws NotFoundException, CertificateException {
         Certificate certificate = null;
         UserUpdateRequestDto requestDto = new UserUpdateRequestDto();
+        if (request.getGroupUuids() != null) {
+            requestDto.setGroups(resolveGroups(request.getGroupUuids()));
+        }
 
         if (StringUtils.isNotBlank(request.getCertificateUuid())
                 || StringUtils.isNotBlank(request.getCertificateData())) {
@@ -521,10 +521,6 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         requestDto.setEmail(request.getEmail());
         requestDto.setFirstName(request.getFirstName());
         requestDto.setLastName(request.getLastName());
-
-        if (request.getGroupUuids() != null) {
-            requestDto.setGroups(resolveGroups(request.getGroupUuids()));
-        }
 
         UserDetailDto response = userManagementApiClient.updateUser(userUuid, requestDto);
 

@@ -186,10 +186,10 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
-    void testCertificateCustomAttributesRolledBackWhenGroupResolutionFails() throws Exception {
-        Certificate existingCertificate = saveCertificate("existing-rolled-back-fingerprint");
+    void testCertificateCustomAttributesUntouchedWhenGroupResolutionFails() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-untouched-by-group-failure-fingerprint");
         RequestAttribute alreadySet = registerCertificateCustomAttribute("criticalityBeforeRollback", "Medium");
-        RequestAttribute submitted = registerCertificateCustomAttribute("criticalityRolledBack", "High");
+        RequestAttribute submitted = registerCertificateCustomAttribute("criticalityNotApplied", "High");
         attributeEngine
                 .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
                         List.of(alreadySet));
@@ -205,7 +205,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         Assertions
                 .assertEquals(List.of("Medium"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityBeforeRollback"));
-        Assertions.assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityRolledBack").isEmpty());
+        Assertions.assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityNotApplied").isEmpty());
     }
 
     @Test
