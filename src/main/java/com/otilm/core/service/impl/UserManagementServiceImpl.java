@@ -222,20 +222,23 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
             }
         }
 
-        TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
-        try {
-            if (assigned != null) {
+        if (assigned != null) {
+            TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
+            try {
                 applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
+                transactionManager.commit(metadata);
+            } catch (RuntimeException | CertificateException | NotFoundException e) {
+                rollbackIfIncomplete(metadata);
+                throw e;
             }
-            response
-                    .setCustomAttributes(attributeEngine
-                            .updateObjectCustomAttributesContent(Resource.USER, UUID.fromString(response.getUuid()),
-                                    request.getCustomAttributes()));
-            transactionManager.commit(metadata);
-        } catch (RuntimeException | AttributeException | NotFoundException | CertificateException e) {
-            rollbackIfIncomplete(metadata);
-            throw e;
         }
+
+        // The engine runs this in a transaction of its own, so a refusal here cannot undo the certificate
+        // attributes that are already committed, as it would if the two shared one.
+        response
+                .setCustomAttributes(attributeEngine
+                        .updateObjectCustomAttributesContent(Resource.USER, UUID.fromString(response.getUuid()),
+                                request.getCustomAttributes()));
 
         logger.logEvent(Operation.CREATE, OperationResult.SUCCESS, response.toLogData(), null, null);
         return response;

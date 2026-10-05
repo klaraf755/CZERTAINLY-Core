@@ -1,5 +1,6 @@
 package com.otilm.core.integration.service;
 
+import com.otilm.api.exception.AttributeException;
 import com.otilm.api.exception.NotFoundException;
 import com.otilm.api.exception.ValidationException;
 import com.otilm.api.model.client.attribute.RequestAttribute;
@@ -282,6 +283,30 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void testFailedUserAttributeWriteKeepsTheCertificateAttributes() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-user-attribute-failure-fingerprint");
+        RequestAttribute certificateAttribute = registerCertificateCustomAttribute("criticalityKeptOnUserFailure",
+                "High");
+        RequestAttribute userAttribute = registerCustomAttribute(Resource.USER, "departmentForbidden", "Sales");
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+        // The caller may edit the certificate attribute but not the user one, which the content validation filters
+        // out silently -- so the refusal only happens once the user attributes are written.
+        restrictObjectAccess(Resource.ATTRIBUTE, ResourceAction.MEMBERS, List.of(certificateAttribute.getUuid()));
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithForbiddenUserAttribute");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(certificateAttribute));
+        request.setCustomAttributes(List.of(userAttribute));
+
+        Assertions.assertThrows(AttributeException.class, () -> userManagementService.createUser(request));
+
+        Assertions
+                .assertEquals(List.of("High"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityKeptOnUserFailure"));
+    }
+
+    @Test
     void testMismatchedAttributeIdentityRefusedBeforeUserIsCreated() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-mismatched-identity-fingerprint");
         RequestAttribute allowed = registerCertificateCustomAttribute("criticalityAllowedIdentity", "Medium");
@@ -513,10 +538,14 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     private RequestAttribute registerCertificateCustomAttribute(String name, String value) throws Exception {
+        return registerCustomAttribute(Resource.CERTIFICATE, name, value);
+    }
+
+    private RequestAttribute registerCustomAttribute(Resource resource, String name, String value) throws Exception {
         CustomAttributeCreateRequestDto definition = new CustomAttributeCreateRequestDto();
         definition.setName(name);
         definition.setLabel(name);
-        definition.setResources(List.of(Resource.CERTIFICATE));
+        definition.setResources(List.of(resource));
         definition.setContentType(AttributeContentType.STRING);
         String uuid = attributeService.createCustomAttribute(definition).getUuid();
 
