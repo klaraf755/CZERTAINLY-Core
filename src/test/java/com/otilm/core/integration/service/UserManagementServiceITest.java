@@ -30,6 +30,7 @@ import com.otilm.core.dao.repository.GroupRepository;
 import com.otilm.core.dao.repository.ListViewRepository;
 import com.otilm.core.helpers.CertificateGeneratorHelper;
 import com.otilm.core.model.auth.ResourceAction;
+import com.otilm.core.security.authn.client.AuthenticationCache;
 import com.otilm.core.security.authn.client.UserManagementApiClient;
 import com.otilm.core.service.AttributeExternalService;
 import com.otilm.core.service.CertificateUploadService;
@@ -99,6 +100,9 @@ class UserManagementServiceITest extends BaseSpringBootTest {
 
     @MockitoBean
     CertificateUploadService certificateUploadService;
+
+    @MockitoBean
+    AuthenticationCache authenticationCache;
 
     @AfterAll
     void tearDownSessionTables() {
@@ -184,6 +188,24 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         Assertions
                 .assertEquals(List.of("High"),
                         certificateCustomAttributeValues(existingCertificate, "criticalityByFingerprint"));
+    }
+
+    @Test
+    void testAuthenticationCacheEvictedWhenCertificateAttributeWriteFails() throws Exception {
+        Certificate existingCertificate = saveCertificate("update-cache-eviction-fingerprint");
+        RequestAttribute allowed = registerCertificateCustomAttribute("criticalityCacheAllowed", "Medium");
+        RequestAttribute forbidden = registerCertificateCustomAttribute("criticalityCacheForbidden", "High");
+        when(userManagementApiClient.updateUser(anyString(), any())).thenReturn(userDetailDto());
+        restrictObjectAccess(Resource.ATTRIBUTE, ResourceAction.MEMBERS, List.of(allowed.getUuid()));
+
+        UpdateUserRequestDto request = new UpdateUserRequestDto();
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(forbidden));
+
+        String userUuid = UUID.randomUUID().toString();
+        Assertions.assertThrows(CertificateException.class, () -> userManagementService.updateUser(userUuid, request));
+
+        verify(authenticationCache).evictByUserUuid(UUID.fromString(userUuid));
     }
 
     @Test
