@@ -1839,6 +1839,13 @@ public class AttributeEngine {
             AttributeDefinition attributeDefinition = attributeDefinitionRepository
                     .findByTypeAndName(AttributeType.CUSTOM, requestAttribute.getName())
                     .orElseThrow(() -> new NotFoundException(AttributeDefinition.class, requestAttribute.getName()));
+            // Content validation filters on the submitted uuid while the write resolves by name, so an attribute
+            // carrying one definition's uuid under another's name slips past validation and is written anyway.
+            if (!attributeDefinition.getUuid().equals(requestAttribute.getUuid())) {
+                throw new AttributeException(String
+                        .format("Custom attribute `%s` does not match the submitted attribute UUID",
+                                requestAttribute.getName()));
+            }
             checkCustomAttributeUpdatePermissions(securityResourceFilter, attributeDefinition);
         }
     }

@@ -282,6 +282,37 @@ class UserManagementServiceITest extends BaseSpringBootTest {
     }
 
     @Test
+    void testMismatchedAttributeIdentityRefusedBeforeUserIsCreated() throws Exception {
+        Certificate existingCertificate = saveCertificate("existing-mismatched-identity-fingerprint");
+        RequestAttribute allowed = registerCertificateCustomAttribute("criticalityAllowedIdentity", "Medium");
+        RequestAttribute forbidden = registerCertificateCustomAttribute("criticalityForbiddenIdentity", "High");
+        attributeEngine
+                .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
+                        List.of(allowed));
+        when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
+        restrictObjectAccess(Resource.ATTRIBUTE, ResourceAction.MEMBERS, List.of(allowed.getUuid()));
+
+        // The forbidden attribute's uuid carried under the allowed attribute's name: content validation filters on
+        // the uuid and drops it, so only the permission preflight can catch the mismatch.
+        RequestAttributeV3 disguised = new RequestAttributeV3();
+        disguised.setUuid(forbidden.getUuid());
+        disguised.setName("criticalityAllowedIdentity");
+        disguised.setContentType(AttributeContentType.STRING);
+        disguised.setContent(List.of(new StringAttributeContentV3("Low")));
+
+        AddUserRequestDto request = new AddUserRequestDto();
+        request.setUsername("userWithMismatchedAttributeIdentity");
+        request.setCertificateUuid(existingCertificate.getUuid().toString());
+        request.setCertificateCustomAttributes(List.of(disguised));
+
+        Assertions.assertThrows(CertificateException.class, () -> userManagementService.createUser(request));
+        verify(userManagementApiClient, never()).createUser(any());
+        Assertions
+                .assertEquals(List.of("Medium"),
+                        certificateCustomAttributeValues(existingCertificate, "criticalityAllowedIdentity"));
+    }
+
+    @Test
     void testForbiddenCustomAttributePreservesExistingCertificateContent() throws Exception {
         Certificate existingCertificate = saveCertificate("existing-forbidden-attribute-fingerprint");
         RequestAttribute allowed = registerCertificateCustomAttribute("criticalityAllowed", "Medium");
