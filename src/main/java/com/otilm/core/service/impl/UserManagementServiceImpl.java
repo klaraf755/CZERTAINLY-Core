@@ -212,25 +212,10 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
 
         ResolvedCertificate assigned = resolved;
         if (assigned != null) {
-            TransactionStatus association = transactionManager.getTransaction(new DefaultTransactionDefinition());
-            try {
-                certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
-                transactionManager.commit(association);
-            } catch (RuntimeException | NotFoundException e) {
-                rollbackIfIncomplete(association);
-                throw e;
-            }
-        }
-
-        if (assigned != null) {
-            TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
-            try {
-                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
-                transactionManager.commit(metadata);
-            } catch (RuntimeException | CertificateException | NotFoundException e) {
-                rollbackIfIncomplete(metadata);
-                throw e;
-            }
+            inShortTransaction(() -> certificateService
+                    .updateCertificateUser(assigned.certificate().getUuid(), response.getUuid()));
+            inShortTransaction(
+                    () -> applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes()));
         }
 
         // The engine runs this in a transaction of its own, so a refusal here cannot undo the certificate
@@ -536,13 +521,26 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         }
     }
 
+    @FunctionalInterface
+    private interface LocalWrite {
+        void run() throws CertificateException, NotFoundException;
+    }
+
     /**
-     * A commit-time failure already completes the transaction, and rolling back a completed one throws and masks the
-     * original exception.
+     * Commits the writes in a transaction of their own, so nothing stays locked across the auth service call. A commit
+     * that fails has already completed the transaction, and rolling a completed one back would throw over the original
+     * failure.
      */
-    private void rollbackIfIncomplete(TransactionStatus status) {
-        if (!status.isCompleted()) {
-            transactionManager.rollback(status);
+    private void inShortTransaction(LocalWrite write) throws CertificateException, NotFoundException {
+        TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
+        try {
+            write.run();
+            transactionManager.commit(status);
+        } catch (RuntimeException | CertificateException | NotFoundException e) {
+            if (!status.isCompleted()) {
+                transactionManager.rollback(status);
+            }
+            throw e;
         }
     }
 
@@ -611,27 +609,15 @@ public class UserManagementServiceImpl implements UserManagementExternalService,
         UserDetailDto response = userManagementApiClient.updateUser(userUuid, requestDto);
 
         ResolvedCertificate assigned = resolved;
-        TransactionStatus association = transactionManager.getTransaction(new DefaultTransactionDefinition());
-        try {
+        inShortTransaction(() -> {
             detachCurrentCertificateUser(response.getUuid());
             if (assigned != null) {
                 certificateService.updateCertificateUser(assigned.certificate().getUuid(), response.getUuid());
             }
-            transactionManager.commit(association);
-        } catch (RuntimeException | NotFoundException e) {
-            rollbackIfIncomplete(association);
-            throw e;
-        }
-
+        });
         if (assigned != null) {
-            TransactionStatus metadata = transactionManager.getTransaction(new DefaultTransactionDefinition());
-            try {
-                applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes());
-                transactionManager.commit(metadata);
-            } catch (RuntimeException | CertificateException | NotFoundException e) {
-                rollbackIfIncomplete(metadata);
-                throw e;
-            }
+            inShortTransaction(
+                    () -> applyCertificateCustomAttributes(assigned, request.getCertificateCustomAttributes()));
         }
         return response;
     }
