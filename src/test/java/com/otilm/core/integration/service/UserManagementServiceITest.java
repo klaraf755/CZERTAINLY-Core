@@ -206,6 +206,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
         String userUuid = UUID.randomUUID().toString();
         Assertions.assertThrows(CertificateException.class, () -> userManagementService.updateUser(userUuid, request));
 
+        verify(userManagementApiClient, never()).updateUser(anyString(), any());
         verify(authenticationCache).evictByUserUuid(UUID.fromString(userUuid));
     }
 
@@ -239,6 +240,7 @@ class UserManagementServiceITest extends BaseSpringBootTest {
 
         String userUuid = UUID.randomUUID().toString();
         Assertions.assertThrows(AccessDeniedException.class, () -> userManagementService.updateUser(userUuid, request));
+        verify(userManagementApiClient, never()).updateUser(anyString(), any());
         Assertions
                 .assertTrue(certificateCustomAttributeValues(existingCertificate, "criticalityUpdateDenied").isEmpty());
     }
