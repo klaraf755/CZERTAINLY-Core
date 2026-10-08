@@ -348,8 +348,8 @@ class UserManagementServiceITest extends BaseSpringBootTest {
                 .updateObjectCustomAttributesContent(Resource.CERTIFICATE, existingCertificate.getUuid(),
                         List.of(allowed));
         when(userManagementApiClient.createUser(any())).thenReturn(userDetailDto());
-        // The caller may edit the attribute the certificate already carries, but not the one being submitted, so
-        // the engine's scoped delete runs before the per-attribute check refuses the write.
+        // The caller may edit the attribute the certificate already carries, but not the one being submitted. The
+        // preflight refuses that before the auth call, so the engine's scoped delete never runs on this path.
         restrictObjectAccess(Resource.ATTRIBUTE, ResourceAction.MEMBERS, List.of(allowed.getUuid()));
 
         AddUserRequestDto request = new AddUserRequestDto();
